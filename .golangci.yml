@@ -1,0 +1,24 @@
+# golangci-lint v2 config. Deliberately lean on day 1 — the codebase predates a
+# linter, so we enable high-value, low-false-positive linters and leave formatting
+# to the separate `gofmt` CI check. Expand the set in follow-ups as the baseline
+# stays clean.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - govet # correctness checks (superset of `go vet`)
+    - ineffassign # assignments that are never used
+    - staticcheck # the high-value bug/simplification linter
+    - unused # dead code
+    - errcheck # unchecked errors
+
+  exclusions:
+    # Generated/embedded and test code get lighter treatment.
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck # tests intentionally ignore many errors

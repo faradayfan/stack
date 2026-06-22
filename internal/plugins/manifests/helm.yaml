@@ -1,0 +1,20 @@
+tool: helm
+detect: "helm version --template {{.Version}}"
+provides: [render-config, apply, wait-ready, teardown, status]
+steps:
+  # apply = upgrade --install; values + --set + namespace/context come from the env.
+  apply:
+    command: >-
+      helm upgrade --install {{.release}} {{.chart}}
+      --kube-context {{.kube_context}} -n {{.namespace}} --create-namespace
+      {{range .values}}-f {{.}} {{end}}{{range $k, $v := .set}}--set {{$k}}={{$v}} {{end}}
+  # render = template (used for the smoke/dry render; not in the M1 deploy path).
+  render-config:
+    command: >-
+      helm template {{.release}} {{.chart}} {{range .values}}-f {{.}} {{end}}
+  wait-ready:
+    command: >-
+      helm --kube-context {{.kube_context}} -n {{.namespace}} status {{.release}}
+  teardown:
+    command: >-
+      helm --kube-context {{.kube_context}} -n {{.namespace}} uninstall {{.release}}

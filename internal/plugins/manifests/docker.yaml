@@ -1,0 +1,18 @@
+tool: docker
+detect: "docker version --format {{.Client.Version}}"
+provides: [build-artifact, deliver-artifact]
+variants:
+  # Modern docker (buildx default). For local single-arch loads we still use the
+  # classic build + ctr-import path (load mode), and reserve buildx --push for the
+  # registry-push delivery (remote-k8s, a later milestone).
+  - when: ">=20.0"
+    steps:
+      build-artifact:
+        command: >-
+          docker build
+          {{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} {{.context}}
+      deliver-artifact:
+        # load → import into the node's containerd; push → registry push.
+        command: >-
+          {{if eq .delivery "push"}}docker push {{.ref}}{{else}}docker save {{.ref}} | docker exec -i {{.node}} ctr -n k8s.io images import -{{end}}
+incompatible: "<19.0"
