@@ -1,5 +1,8 @@
 tool: govulncheck
-detect: "go version"
+detect: "govulncheck -version"
+setup:
+  unmanaged: "go install golang.org/x/vuln/cmd/govulncheck@latest"
+  # presence-only (go-installed; version output is not a clean semver).
 provides: [check]
 steps:
   check:

@@ -1,5 +1,8 @@
 tool: golangci
 detect: "golangci-lint version"
+version_pattern: "version (\\d+\\.\\d+\\.\\d+)"
+setup:
+  asdf: golangci-lint
 provides: [check]
 steps:
   check:

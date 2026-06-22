@@ -1,8 +1,8 @@
 tool: grype-image
 detect: "grype version -o text"
+setup:
+  asdf: grype
 provides: [check]
-# Image scan — needs a built artifact, so the check declares `after: build-artifact`.
-# {{.target}} is the image ref to scan.
 steps:
   check:
     command: "grype {{.target}}"

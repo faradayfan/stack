@@ -1,7 +1,8 @@
 tool: grype-src
 detect: "grype version -o text"
+setup:
+  asdf: grype
 provides: [check]
-# Source/dependency scan. Reads .grype.yaml (fail-on-severity + ignore list).
 steps:
   check:
     command: "grype dir:."
