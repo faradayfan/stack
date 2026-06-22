@@ -7,17 +7,22 @@ config:
   - { name: platform }
   - { name: tag }
 variants:
-  # Modern docker (buildx default). For local single-arch loads we still use the
-  # classic build + ctr-import path (load mode), and reserve buildx --push for the
-  # registry-push delivery (remote-k8s, a later milestone).
+  # Modern docker (buildx available). Two delivery shapes:
+  #   - load (local k8s): classic `docker build` then save | ctr-import into the
+  #     node's containerd (single-arch, no registry).
+  #   - push (remote k8s, e.g. the Pi): `docker buildx build --platform … --push`
+  #     builds for the target arch AND pushes in one step, so deliver-artifact is
+  #     a no-op (the push already happened during build).
   - when: ">=20.0"
     steps:
       build-artifact:
         command: >-
-          docker build
-          {{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} {{.context}}
+          {{if eq .delivery "push"}}docker buildx build
+          {{if .platform}}--platform {{.platform}} {{end}}{{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} --push {{.context}}{{else}}docker build
+          {{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} {{.context}}{{end}}
       deliver-artifact:
-        # load → import into the node's containerd; push → registry push.
+        # load → import into the node's containerd; push → already delivered by
+        # buildx --push during build, so a no-op.
         command: >-
-          {{if eq .delivery "push"}}docker push {{.ref}}{{else}}docker save {{.ref}} | docker exec -i {{.node}} ctr -n k8s.io images import -{{end}}
+          {{if eq .delivery "push"}}true{{else}}docker save {{.ref}} | docker exec -i {{.node}} ctr -n k8s.io images import -{{end}}
 incompatible: "<19.0"

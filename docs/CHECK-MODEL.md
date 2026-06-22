@@ -44,18 +44,18 @@ optional `after` dependency, optional args.
 
 ```yaml
 # .stack/app.yaml  (excerpt)
-checks:
-  - { name: format,      tool: gofmt,       blocking: true }
-  - { name: lint,        tool: golangci,    blocking: true }
-  - { name: unit,        tool: go-test,     blocking: true, args: { short: true } }
-  - { name: integration, tool: go-test,     blocking: true }            # needs docker
-  - { name: scan-deps,   tool: grype-src,   blocking: true }
-  - { name: scan-image,  tool: grype-image, blocking: true, after: build-artifact }
-  - { name: sast,        tool: gosec,       blocking: false }           # report-only
-  - { name: vuln-go,     tool: govulncheck, blocking: false }
+checks:                                      # keyed by check name (map, not list)
+  format:      { tool: gofmt,       blocking: true }
+  lint:        { tool: golangci,    blocking: true }
+  unit:        { tool: go-test,     blocking: true, args: { short: true } }
+  integration: { tool: go-test,     blocking: true }            # needs docker
+  scan-deps:   { tool: grype-src,   blocking: true }
+  scan-image:  { tool: grype-image, blocking: true, after: build-artifact }
+  sast:        { tool: gosec,       blocking: false }           # report-only
+  vuln-go:     { tool: govulncheck, blocking: false }
   # frontend checks bind to their own tools:
-  - { name: ui-typecheck, tool: pnpm-script, args: { script: typecheck }, dir: frontend }
-  - { name: ui-build,     tool: pnpm-script, args: { script: build },     dir: frontend }
+  ui-typecheck: { tool: pnpm-script, args: { script: typecheck }, dir: frontend }
+  ui-build:     { tool: pnpm-script, args: { script: build },     dir: frontend }
 ```
 
 A check entry is "run ONE tool, get pass/fail." If a check needs real logic

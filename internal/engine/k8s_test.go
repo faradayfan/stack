@@ -16,15 +16,17 @@ func baselineLikeCfg() config.Merged {
 	return config.Merged{
 		EnvName: "local-k8s",
 		App: config.App{
-			Name:       "baseline",
-			DefaultTag: "dev",
-			Images: []config.Image{
-				{Name: "baseline", Context: "."},
-				{Name: "baseline-ui", Context: "./frontend"},
-				{Name: "baseline-postgresql", Context: "./deploy/postgres", Tag: "16-pgvector"},
-				{Name: "baseline-mem0-api", Context: "./deploy/mem0-api", Tag: "ollama", Args: map[string]string{"PATCH_OLLAMA": "1"}},
+			Name: "baseline",
+			Settings: config.Settings{
+				DefaultTag: "dev",
+				Scan:       &config.Scan{Images: []string{"baseline", "baseline-ui"}, FailOn: "high"},
 			},
-			Scan: config.Scan{Images: []string{"baseline", "baseline-ui"}, FailOn: "high"},
+			Images: map[string]config.Image{
+				"baseline":            {Context: "."},
+				"baseline-ui":         {Context: "./frontend"},
+				"baseline-postgresql": {Context: "./deploy/postgres", Tag: "16-pgvector"},
+				"baseline-mem0-api":   {Context: "./deploy/mem0-api", Tag: "ollama", Args: map[string]string{"PATCH_OLLAMA": "1"}},
+			},
 		},
 		Env: config.Env{
 			Pattern:       "k8s",
@@ -91,6 +93,65 @@ func TestDeployK8s_MatchesMakeLocalUp(t *testing.T) {
 	applyPrefix := "helm upgrade --install baseline deploy/charts/baseline --kube-context docker-desktop -n baseline --create-namespace -f deploy/local/values.yaml --set rollmeTimestamp="
 	if !strings.Contains(got, applyPrefix) {
 		t.Errorf("deploy missing helm apply line with prefix:\n  %s\n--- got ---\n%s", applyPrefix, got)
+	}
+}
+
+// piLikeCfg mirrors a registry-push env (the Pi): push delivery + a platform +
+// an env-wide registry/tag. The build must use buildx with --platform and --push.
+func piLikeCfg() config.Merged {
+	return config.Merged{
+		EnvName: "pi",
+		App: config.App{
+			Name: "baseline",
+			Settings: config.Settings{
+				DefaultTag: "dev",
+				Scan:       &config.Scan{Images: []string{"baseline"}, FailOn: "high"},
+			},
+			Images: map[string]config.Image{
+				"baseline": {Context: "."},
+			},
+		},
+		Env: config.Env{
+			Pattern:       "k8s",
+			KubeContext:   "k3s",
+			Namespace:     "baseline",
+			ImageDelivery: "push",
+			Settings: config.Settings{
+				Registry: "reg.example:5000",
+				Platform: "linux/arm64",
+			},
+			Tag: "abc123",
+			Tools: map[string]config.ToolBinding{
+				// platform is NOT in the binding config — it must flow from the
+				// resolved Platform() setting (declared once at the env root).
+				"build-artifact":   {Tool: "docker"},
+				"deliver-artifact": {Tool: "docker"},
+				"scan-artifact":    {Tool: "grype"},
+				"apply": {Tool: "helm", Config: map[string]any{
+					"chart": "deploy/charts/baseline",
+				}},
+			},
+		},
+	}
+}
+
+// TestDeployK8s_PushUsesBuildx: on a push env with a platform, the build must be
+// `docker buildx build --platform … --push` (not classic build + docker push).
+func TestDeployK8s_PushUsesBuildx(t *testing.T) {
+	reg, err := plugins.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(piLikeCfg(), reg, true)
+	var buf bytes.Buffer
+	e.Out = &buf
+	if err := e.DeployK8s(); err != nil {
+		t.Fatalf("dry-run errored: %v", err)
+	}
+	got := buf.String()
+	want := "docker buildx build --platform linux/arm64 -t reg.example:5000/baseline:abc123 --push ."
+	if !strings.Contains(got, want+"\n") {
+		t.Errorf("push build must use buildx --platform --push:\n  want %s\n--- got ---\n%s", want, got)
 	}
 }
 

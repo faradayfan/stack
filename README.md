@@ -81,11 +81,11 @@ chart: deploy/charts/baseline
 values: [deploy/local/values.yaml]
 helm_set: { rollmeTimestamp: "{{ now_unix }}" }
 deps: { helm_repos: [{ name: bitnami, url: https://charts.bitnami.com/bitnami }] }
-images:
-  - { name: baseline,             context: ., tag: "dev" }
-  - { name: baseline-ui,          context: ./frontend, tag: "dev" }
-  - { name: baseline-postgresql,  context: ./deploy/postgres, tag: "16-pgvector" }
-  - { name: baseline-mem0-api,    context: ./deploy/mem0-api, tag: "ollama", args: { PATCH_OLLAMA: "1" } }
+images:                                   # keyed by image name (map, not list)
+  baseline:            { context: . }
+  baseline-ui:         { context: ./frontend }
+  baseline-postgresql: { context: ./deploy/postgres, tag: "16-pgvector" }
+  baseline-mem0-api:   { context: ./deploy/mem0-api, tag: "ollama", args: { PATCH_OLLAMA: "1" } }
 scan: { images: [baseline, baseline-ui], fail_on: high }
 ```
 
