@@ -31,6 +31,12 @@ func New(cfg config.Merged, reg *plugins.Registry, dryRun bool) *Engine {
 	return &Engine{Cfg: cfg, Plugins: reg, DryRun: dryRun, Out: os.Stdout, versions: map[string]string{}}
 }
 
+// NewForChecks builds an engine for the env-independent check flow, needing only
+// the app config (no selected environment).
+func NewForChecks(app config.App, reg *plugins.Registry, dryRun bool) *Engine {
+	return New(config.Merged{App: app}, reg, dryRun)
+}
+
 // Step resolves the abstract step to its bound tool, renders the command with
 // `inputs`, and runs it. The tool is taken from the env's `tools` binding, or a
 // pattern default (defaultTool) when the context omits it — so a minimal context

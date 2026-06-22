@@ -1,0 +1,6 @@
+tool: golangci
+detect: "golangci-lint version"
+provides: [check]
+steps:
+  check:
+    command: "golangci-lint run {{if .timeout}}--timeout={{.timeout}} {{end}}./..."

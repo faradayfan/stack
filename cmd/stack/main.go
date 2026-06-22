@@ -76,8 +76,42 @@ func rootCmd() *cobra.Command {
 		deployCmd(newEngine),
 		downCmd(newEngine),
 		statusCmd(newEngine),
+		checkCmd(&dryRun),
 	)
 	return root
+}
+
+// checkCmd runs the env-independent verification flow (the `stack check` /CI flow).
+func checkCmd(dryRun *bool) *cobra.Command {
+	return &cobra.Command{
+		Use:   "check [name...]",
+		Short: "Run the verification checks (tests, lint, format, scans) — the CI flow",
+		Long: "Run the checks declared in .stack/app.yaml. With no args, runs all;\n" +
+			"otherwise only the named checks. Independent checks run in parallel;\n" +
+			"non-blocking checks report but never fail the run.",
+		RunE: func(_ *cobra.Command, args []string) error {
+			cwd, _ := os.Getwd()
+			repo := config.FindRepoRoot(cwd)
+			app, err := config.LoadApp(repo)
+			if err != nil {
+				return err
+			}
+			reg, err := plugins.Load()
+			if err != nil {
+				return err
+			}
+			e := engine.NewForChecks(app, reg, *dryRun)
+			results, passed, err := e.Check(args)
+			if err != nil {
+				return err
+			}
+			fmt.Print(engine.Summary(results))
+			if !passed {
+				return fmt.Errorf("one or more blocking checks failed")
+			}
+			return nil
+		},
+	}
 }
 
 func useCmd() *cobra.Command {

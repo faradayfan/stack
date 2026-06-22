@@ -1,0 +1,4 @@
+name: stack
+checks:
+  - { name: format, tool: gofmt,    blocking: true }
+  - { name: unit,   tool: go-test,  blocking: true, args: { short: true } }

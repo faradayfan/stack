@@ -1,0 +1,7 @@
+tool: gosec
+detect: "gosec --version"
+provides: [check]
+# SAST. Typically declared blocking:false until the baseline is triaged.
+steps:
+  check:
+    command: "gosec -severity {{if .severity}}{{.severity}}{{else}}high{{end}} -confidence {{if .confidence}}{{.confidence}}{{else}}high{{end}} ./..."
