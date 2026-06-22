@@ -1,0 +1,8 @@
+tool: pnpm-script
+detect: "pnpm --version"
+provides: [check]
+# Run a package.json script (typecheck/build) in a subdir. `dir` comes from the
+# check entry; install with a frozen lockfile first for reproducibility.
+steps:
+  check:
+    command: "pnpm install --frozen-lockfile && pnpm run {{.script}}"

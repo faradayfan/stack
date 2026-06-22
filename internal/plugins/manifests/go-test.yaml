@@ -1,0 +1,7 @@
+tool: go-test
+detect: "go version"
+provides: [check]
+# short=true → unit only (no Docker); omit for the full integration+conformance suite.
+steps:
+  check:
+    command: "go test {{if .short}}-short {{end}}./..."

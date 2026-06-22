@@ -1,0 +1,6 @@
+tool: govulncheck
+detect: "go version"
+provides: [check]
+steps:
+  check:
+    command: "govulncheck ./..."

@@ -36,12 +36,28 @@ type Deps struct {
 	HelmRepos []HelmRepo `yaml:"helm_repos,omitempty"`
 }
 
+// Check is one verification entry in the `stack check` flow — "run one tool, get
+// pass/fail". Atomic by design: if a check needs real logic, it's a hook instead.
+type Check struct {
+	Name     string         `yaml:"name"`
+	Tool     string         `yaml:"tool"`               // a plugin providing the `check` step
+	Blocking *bool          `yaml:"blocking,omitempty"` // nil/true → failure fails the run; false → report-only
+	After    string         `yaml:"after,omitempty"`    // depend on a prior step (e.g. build-artifact)
+	Serial   bool           `yaml:"serial,omitempty"`   // must not run alongside other checks
+	Dir      string         `yaml:"dir,omitempty"`      // run from this subdir (e.g. frontend)
+	Args     map[string]any `yaml:"args,omitempty"`     // passed as template inputs to the tool's check command
+}
+
+// IsBlocking reports whether a failure of this check fails the run (default true).
+func (c Check) IsBlocking() bool { return c.Blocking == nil || *c.Blocking }
+
 // App is .stack/app.yaml — app-wide, environment-independent.
 type App struct {
 	Name       string  `yaml:"name"`
 	DefaultTag string  `yaml:"default_tag,omitempty"` // tag when an Image omits one; default "dev"
 	Images     []Image `yaml:"images"`
 	Scan       Scan    `yaml:"scan"`
+	Checks     []Check `yaml:"checks,omitempty"` // the `stack check` flow
 	// Hooks: name → command (M1 keeps the simple string form; the typed
 	// env-mapping form lands with the native/seed milestone).
 	Hooks map[string]string `yaml:"hooks,omitempty"`
@@ -112,6 +128,19 @@ func Load(repoRoot, envName string) (Merged, error) {
 		return m, err
 	}
 	return m, nil
+}
+
+// LoadApp reads only .stack/app.yaml. The check flow is environment-independent,
+// so `stack check` does not require a selected env.
+func LoadApp(repoRoot string) (App, error) {
+	var a App
+	if err := readYAML(filepath.Join(repoRoot, StackDir, "app.yaml"), &a); err != nil {
+		return a, fmt.Errorf("load app config: %w", err)
+	}
+	if a.Name == "" {
+		return a, fmt.Errorf("app.yaml: name is required")
+	}
+	return a, nil
 }
 
 func (m Merged) validate() error {
