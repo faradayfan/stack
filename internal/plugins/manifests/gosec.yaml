@@ -8,4 +8,5 @@ setup:
 provides: [check]
 steps:
   check:
-    command: "gosec -severity {{if .severity}}{{.severity}}{{else}}high{{end}} -confidence {{if .confidence}}{{.confidence}}{{else}}high{{end}} ./..."
+    # -quiet → only print findings, not the per-package/file import log.
+    command: "gosec -quiet -severity {{if .severity}}{{.severity}}{{else}}high{{end}} -confidence {{if .confidence}}{{.confidence}}{{else}}high{{end}} ./..."

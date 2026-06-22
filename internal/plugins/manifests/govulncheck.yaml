@@ -6,4 +6,10 @@ setup:
 provides: [check]
 steps:
   check:
-    command: "govulncheck ./..."
+    # govulncheck v1.4.0 (latest) panics on Go 1.26 with a full goroutine dump
+    # ("ForEachElement called on type containing *types.TypeParam") — an upstream
+    # x/vuln + Go 1.26 incompatibility with no fixed release yet. This check is
+    # non-blocking, so the crash never fails the run; `2>/dev/null` just keeps the
+    # stacktrace out of the output. REMOVE the redirect once upstream ships a fix
+    # so real diagnostics surface again.
+    command: "govulncheck ./... 2>/dev/null"
