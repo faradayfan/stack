@@ -1,0 +1,11 @@
+manager: asdf
+detect: "asdf --version"
+version_source: tool-versions
+ops:
+  # read the pinned version for a plugin from .tool-versions (empty if absent).
+  pinned: "awk '$1==\"{{.plugin}}\"{print $2}' .tool-versions"
+  # add the plugin (idempotent) then install + reshim the pinned version.
+  install: |
+    asdf plugin add {{.plugin}} 2>/dev/null || true
+    asdf install {{.plugin}} {{.version}}
+    asdf reshim {{.plugin}}

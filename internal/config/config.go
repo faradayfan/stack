@@ -53,11 +53,12 @@ func (c Check) IsBlocking() bool { return c.Blocking == nil || *c.Blocking }
 
 // App is .stack/app.yaml — app-wide, environment-independent.
 type App struct {
-	Name       string  `yaml:"name"`
-	DefaultTag string  `yaml:"default_tag,omitempty"` // tag when an Image omits one; default "dev"
-	Images     []Image `yaml:"images"`
-	Scan       Scan    `yaml:"scan"`
-	Checks     []Check `yaml:"checks,omitempty"` // the `stack check` flow
+	Name         string  `yaml:"name"`
+	ToolsManager string  `yaml:"tools_manager,omitempty"` // e.g. "asdf"; empty → setup errors
+	DefaultTag   string  `yaml:"default_tag,omitempty"`   // tag when an Image omits one; default "dev"
+	Images       []Image `yaml:"images"`
+	Scan         Scan    `yaml:"scan"`
+	Checks       []Check `yaml:"checks,omitempty"` // the `stack check` flow
 	// Hooks: name → command (M1 keeps the simple string form; the typed
 	// env-mapping form lands with the native/seed milestone).
 	Hooks map[string]string `yaml:"hooks,omitempty"`

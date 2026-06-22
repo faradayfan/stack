@@ -15,6 +15,9 @@ import (
 //go:embed manifests/*.yaml
 var builtin embed.FS
 
+//go:embed managers/*.yaml
+var managerFS embed.FS
+
 // Step is the command template + (for documentation) the inputs it consumes.
 type Step struct {
 	Command string `yaml:"command"`
@@ -29,12 +32,14 @@ type Variant struct {
 // Manifest describes a tool (or secret provider): which steps it provides, how to
 // detect its version, and per-version-range command variants.
 type Manifest struct {
-	Tool         string    `yaml:"tool"`     // tool name (or Provider for secret stores)
-	Provider     string    `yaml:"provider"` // set for secret providers instead of tool
-	Detect       string    `yaml:"detect"`   // command whose stdout is the version
-	Provides     []string  `yaml:"provides"`
-	Variants     []Variant `yaml:"variants"`
-	Incompatible string    `yaml:"incompatible,omitempty"`
+	Tool           string    `yaml:"tool"`     // tool name (or Provider for secret stores)
+	Provider       string    `yaml:"provider"` // set for secret providers instead of tool
+	Detect         string    `yaml:"detect"`   // command whose stdout is the version
+	VersionPattern string    `yaml:"version_pattern,omitempty"`
+	Setup          *Setup    `yaml:"setup,omitempty"` // how `stack setup` installs/verifies it
+	Provides       []string  `yaml:"provides"`
+	Variants       []Variant `yaml:"variants"`
+	Incompatible   string    `yaml:"incompatible,omitempty"`
 	// Single-variant tools may declare steps at the top level instead of variants.
 	Steps map[string]Step `yaml:"steps,omitempty"`
 }
@@ -92,38 +97,68 @@ func (m Manifest) CommandFor(step, version string) (string, bool, error) {
 	return "", false, nil
 }
 
-// Registry holds the loaded manifests, keyed by tool/provider name.
+// Registry holds the loaded manifests, keyed by tool/provider name, plus the
+// tools-manager manifests keyed by manager name.
 type Registry struct {
-	byName map[string]Manifest
+	byName   map[string]Manifest
+	managers map[string]Manager
 }
 
-// Load reads the embedded built-in manifests. (Repo-local / user overrides are a
-// later milestone — see PLUGIN-MODEL.md "Manifest sourcing".)
+// Load reads the embedded built-in tool + manager manifests. (Repo-local / user
+// overrides are a later milestone — see PLUGIN-MODEL.md "Manifest sourcing".)
 func Load() (*Registry, error) {
-	r := &Registry{byName: map[string]Manifest{}}
-	entries, err := builtin.ReadDir("manifests")
-	if err != nil {
+	r := &Registry{byName: map[string]Manifest{}, managers: map[string]Manager{}}
+	if err := loadEach(builtin, "manifests", func(b []byte, name string) error {
+		var m Manifest
+		if err := yaml.Unmarshal(b, &m); err != nil {
+			return fmt.Errorf("parse manifest %s: %w", name, err)
+		}
+		r.byName[m.Name()] = m
+		return nil
+	}); err != nil {
 		return nil, err
+	}
+	if err := loadEach(managerFS, "managers", func(b []byte, name string) error {
+		var m Manager
+		if err := yaml.Unmarshal(b, &m); err != nil {
+			return fmt.Errorf("parse manager %s: %w", name, err)
+		}
+		r.managers[m.Manager] = m
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func loadEach(fsys embed.FS, dir string, fn func(b []byte, name string) error) error {
+	entries, err := fsys.ReadDir(dir)
+	if err != nil {
+		return err
 	}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		b, err := builtin.ReadFile(path.Join("manifests", e.Name()))
+		b, err := fsys.ReadFile(path.Join(dir, e.Name()))
 		if err != nil {
-			return nil, err
+			return err
 		}
-		var m Manifest
-		if err := yaml.Unmarshal(b, &m); err != nil {
-			return nil, fmt.Errorf("parse manifest %s: %w", e.Name(), err)
+		if err := fn(b, e.Name()); err != nil {
+			return err
 		}
-		r.byName[m.Name()] = m
 	}
-	return r, nil
+	return nil
 }
 
 // Get returns the manifest for a tool/provider name.
 func (r *Registry) Get(name string) (Manifest, bool) {
 	m, ok := r.byName[name]
+	return m, ok
+}
+
+// Manager returns the tools-manager manifest for a manager name.
+func (r *Registry) Manager(name string) (Manager, bool) {
+	m, ok := r.managers[name]
 	return m, ok
 }

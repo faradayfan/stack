@@ -1,7 +1,11 @@
 tool: gosec
 detect: "gosec --version"
+setup:
+  unmanaged: "go install github.com/securego/gosec/v2/cmd/gosec@v2.22.5"
+  # NOTE: go-installed gosec reports its version as "dev" (no embedded version),
+  # so this is presence-only — the @v2.22.5 pin in the install IS the version
+  # control; we can't read it back to verify.
 provides: [check]
-# SAST. Typically declared blocking:false until the baseline is triaged.
 steps:
   check:
     command: "gosec -severity {{if .severity}}{{.severity}}{{else}}high{{end}} -confidence {{if .confidence}}{{.confidence}}{{else}}high{{end}} ./..."

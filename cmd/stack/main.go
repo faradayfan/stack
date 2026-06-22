@@ -77,8 +77,49 @@ func rootCmd() *cobra.Command {
 		downCmd(newEngine),
 		statusCmd(newEngine),
 		checkCmd(&dryRun),
+		setupCmd(&dryRun),
 	)
 	return root
+}
+
+// setupCmd installs/verifies the tools the checks need, via the configured tools
+// manager (asdf) or each tool's unmanaged fallback.
+func setupCmd(dryRun *bool) *cobra.Command {
+	var doctor bool
+	c := &cobra.Command{
+		Use:   "setup",
+		Short: "Install/verify the tools the checks need (via the tools manager)",
+		Long: "Ensure each tool the checks reference is installed at the version the\n" +
+			"repo pins. asdf-managed tools install from .tool-versions; tools with no\n" +
+			"asdf plugin use their declared unmanaged install. --check diagnoses only.",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cwd, _ := os.Getwd()
+			repo := config.FindRepoRoot(cwd)
+			app, err := config.LoadApp(repo)
+			if err != nil {
+				return err
+			}
+			reg, err := plugins.Load()
+			if err != nil {
+				return err
+			}
+			e := engine.NewForChecks(app, reg, *dryRun)
+			results, ok, err := e.Setup(doctor)
+			if err != nil {
+				return err
+			}
+			fmt.Print(engine.SetupSummary(results))
+			if !ok {
+				if doctor {
+					return fmt.Errorf("some tools are missing — run `stack setup` to install")
+				}
+				return fmt.Errorf("setup did not satisfy all tools")
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&doctor, "check", false, "diagnose only — report what's missing, install nothing")
+	return c
 }
 
 // checkCmd runs the env-independent verification flow (the `stack check` /CI flow).

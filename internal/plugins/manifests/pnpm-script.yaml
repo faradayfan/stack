@@ -1,8 +1,9 @@
 tool: pnpm-script
-detect: "pnpm --version"
+detect: "node --version"
+setup:
+  asdf: nodejs
+  dir: frontend          # node/pnpm pin + detect live in the frontend subdir
 provides: [check]
-# Run a package.json script (typecheck/build) in a subdir. `dir` comes from the
-# check entry; install with a frozen lockfile first for reproducibility.
 steps:
   check:
     command: "pnpm install --frozen-lockfile && pnpm run {{.script}}"

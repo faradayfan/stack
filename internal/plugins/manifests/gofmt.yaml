@@ -1,6 +1,8 @@
 tool: gofmt
+detect: "go version"
+setup:
+  asdf: golang
 provides: [check]
-# Pass iff no files are unformatted. gofmt -l lists offenders; -z asserts empty.
 steps:
   check:
     command: "test -z \"$(gofmt -l .)\" || { echo 'unformatted:'; gofmt -l .; false; }"
