@@ -102,6 +102,43 @@ func TestCheck_BlockingSemantics(t *testing.T) {
 	}
 }
 
+// TestCheck_MissingToolDoesNotAbortRun: a check whose tool can't be resolved
+// (unknown tool, or a binary not on PATH) must fail/skip ONLY that check — the
+// other checks still run. Regression: a missing tool used to abort the whole run.
+func TestCheck_MissingToolDoesNotAbortRun(t *testing.T) {
+	reg, _ := plugins.Load()
+	app := config.App{Name: "x", Checks: []config.Check{
+		{Name: "good", Tool: "gofmt"},             // resolvable
+		{Name: "missing", Tool: "does-not-exist"}, // unknown tool
+		{Name: "also-good", Tool: "go-test", Args: map[string]any{"short": true}},
+	}}
+	e := engine.NewForChecks(app, reg, true) // dry-run: resolvable ones "pass"
+	var buf bytes.Buffer
+	e.Out = &buf
+
+	results, passed, err := e.Check(nil)
+	if err != nil {
+		t.Fatalf("Check must not return a fatal error for a missing tool: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("all 3 checks should appear in results, got %d", len(results))
+	}
+	// the two resolvable checks ran; the missing one is a (blocking) failure.
+	var missing *engine.CheckResult
+	for i := range results {
+		if results[i].Name == "missing" {
+			missing = &results[i]
+		}
+	}
+	if missing == nil || missing.Passed {
+		t.Fatalf("missing-tool check should be a failed result, got %+v", missing)
+	}
+	// a blocking unresolved check fails the run.
+	if passed {
+		t.Error("run should fail when a blocking check's tool is unresolved")
+	}
+}
+
 func TestSummary(t *testing.T) {
 	rs := []engine.CheckResult{
 		{Name: "format", Blocking: true, Passed: true},
