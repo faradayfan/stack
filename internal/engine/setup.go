@@ -27,8 +27,8 @@ type SetupResult struct {
 // doctorOnly (--check) diagnoses without installing. Returns per-tool results and
 // whether the overall setup is satisfied.
 func (e *Engine) Setup(doctorOnly bool) ([]SetupResult, bool, error) {
-	mgrName := e.Cfg.App.ToolsManager
-	tools := toolsFromChecks(e.Cfg.App.Checks)
+	mgrName := e.Cfg.ToolsManager()
+	tools := toolsFromChecks(e.Cfg.App.SortedChecks())
 	if len(tools) == 0 {
 		return nil, true, fmt.Errorf("no checks declare tools to set up")
 	}

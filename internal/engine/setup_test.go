@@ -22,12 +22,12 @@ func setupEngine(t *testing.T, app config.App) *engine.Engine {
 // method (asdf / unmanaged / manual / needs-manager) without installing.
 func TestSetup_DoctorClassifiesMethods(t *testing.T) {
 	app := config.App{
-		Name:         "x",
-		ToolsManager: "asdf",
-		Checks: []config.Check{
-			{Name: "lint", Tool: "golangci"}, // asdf (plugin golangci-lint)
-			{Name: "sast", Tool: "gosec"},    // unmanaged (go install)
-			{Name: "fmt", Tool: "gofmt"},     // asdf (golang)
+		Name:     "x",
+		Settings: config.Settings{ToolsManager: "asdf"},
+		Checks: map[string]config.Check{
+			"lint": {Tool: "golangci"}, // asdf (plugin golangci-lint)
+			"sast": {Tool: "gosec"},    // unmanaged (go install)
+			"fmt":  {Tool: "gofmt"},    // asdf (golang)
 		},
 	}
 	e := setupEngine(t, app)
@@ -56,7 +56,7 @@ func TestSetup_AsdfToolNeedsManager(t *testing.T) {
 	app := config.App{
 		Name: "x",
 		// no tools_manager
-		Checks: []config.Check{{Name: "lint", Tool: "golangci"}},
+		Checks: map[string]config.Check{"lint": {Tool: "golangci"}},
 	}
 	e := setupEngine(t, app)
 	results, ok, err := e.Setup(true)
@@ -73,8 +73,8 @@ func TestSetup_AsdfToolNeedsManager(t *testing.T) {
 
 // TestSetup_UnknownManager errors clearly.
 func TestSetup_UnknownManager(t *testing.T) {
-	app := config.App{Name: "x", ToolsManager: "nope",
-		Checks: []config.Check{{Name: "lint", Tool: "golangci"}}}
+	app := config.App{Name: "x", Settings: config.Settings{ToolsManager: "nope"},
+		Checks: map[string]config.Check{"lint": {Tool: "golangci"}}}
 	e := setupEngine(t, app)
 	if _, _, err := e.Setup(true); err == nil {
 		t.Error("expected error for unknown tools_manager")

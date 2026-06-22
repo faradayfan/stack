@@ -28,8 +28,8 @@ func TestLoadAndMerge(t *testing.T) {
 		`name: baseline
 default_tag: dev
 images:
-  - { name: baseline, context: . }
-  - { name: ui, context: ./frontend, tag: "16-x" }
+  baseline: { context: . }
+  ui: { context: ./frontend, tag: "16-x" }
 scan: { images: [baseline], fail_on: high }`,
 		`pattern: k8s
 namespace: baseline
@@ -43,15 +43,108 @@ tools: { build-artifact: docker, apply: helm }`,
 	if m.App.Name != "baseline" || m.Env.Pattern != "k8s" {
 		t.Fatalf("merge wrong: %+v", m)
 	}
-	// tag defaulting
-	if got := m.ImageRef(m.App.Images[0]); got != "baseline:dev" {
+	base, _ := m.ImageByName("baseline")
+	ui, _ := m.ImageByName("ui")
+	// tag defaulting (no env tag → resolved default "dev")
+	if got := m.ImageRef(base, ""); got != "baseline:dev" {
 		t.Errorf("default tag: got %s", got)
 	}
-	if got := m.ImageRef(m.App.Images[1]); got != "ui:16-x" {
+	if got := m.ImageRef(ui, ""); got != "ui:16-x" {
 		t.Errorf("explicit tag: got %s", got)
 	}
 	if m.ReleaseName() != "baseline" {
 		t.Errorf("release name: got %s", m.ReleaseName())
+	}
+}
+
+// TestSettingsResolution: env value ▸ app value ▸ built-in default, per setting.
+func TestSettingsResolution(t *testing.T) {
+	root := writeCtx(t,
+		`name: baseline
+tools_manager: asdf
+default_tag: dev
+images:
+  baseline: { context: . }`,
+		`pattern: k8s
+registry: registry.example:5000
+tag: abc123
+tools: { apply: helm }`,
+		"pi")
+	m, err := Load(root, "pi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// app-only setting (env doesn't override) → app value
+	if got := m.ToolsManager(); got != "asdf" {
+		t.Errorf("tools_manager: got %q want asdf", got)
+	}
+	// env-only setting → env value (registry: app empty)
+	if got := m.Registry(); got != "registry.example:5000" {
+		t.Errorf("registry: got %q", got)
+	}
+	// default_tag: only app sets it → app value
+	if got := m.DefaultTag(); got != "dev" {
+		t.Errorf("default_tag: got %q", got)
+	}
+	// env-wide tag applies to images that don't pin their own; registry prefixes.
+	base, _ := m.ImageByName("baseline")
+	if got := m.ImageRef(base, m.Env.Tag); got != "registry.example:5000/baseline:abc123" {
+		t.Errorf("env-tag+registry ref: got %s", got)
+	}
+}
+
+// TestSettingsOverride: an env Settings value overrides the app's.
+func TestSettingsOverride(t *testing.T) {
+	root := writeCtx(t,
+		`name: x
+default_tag: dev
+images: { a: { context: . } }`,
+		`pattern: k8s
+default_tag: prod
+tools: { apply: helm }`,
+		"e")
+	m, err := Load(root, "e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.DefaultTag(); got != "prod" {
+		t.Errorf("env override of default_tag: got %q want prod", got)
+	}
+}
+
+// TestImageMapMerge: env images merge by key — override an existing image and add
+// a new one; SortedImages is deterministic (alphabetical) and carries Name.
+func TestImageMapMerge(t *testing.T) {
+	root := writeCtx(t,
+		`name: x
+images:
+  api: { context: ., tag: app-tag }
+  ui:  { context: ./frontend }`,
+		`pattern: k8s
+images:
+  api: { context: ., tag: env-tag }   # override
+  worker: { context: ./worker }       # add
+tools: { apply: helm }`,
+		"e")
+	m, err := Load(root, "e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgs := m.SortedImages()
+	// deterministic, alphabetical: api, ui, worker
+	wantOrder := []string{"api", "ui", "worker"}
+	if len(imgs) != 3 {
+		t.Fatalf("want 3 images, got %d: %+v", len(imgs), imgs)
+	}
+	for i, w := range wantOrder {
+		if imgs[i].Name != w {
+			t.Errorf("image[%d] = %q want %q (sort order)", i, imgs[i].Name, w)
+		}
+	}
+	// env override won
+	api, _ := m.ImageByName("api")
+	if api.Tag != "env-tag" {
+		t.Errorf("env override of api.tag: got %q want env-tag", api.Tag)
 	}
 }
 

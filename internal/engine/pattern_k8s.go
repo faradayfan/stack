@@ -2,11 +2,39 @@ package engine
 
 import (
 	"fmt"
+	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/faradayfan/stack/internal/config"
 )
+
+// resolveToken expands the supported runtime template tokens in a value:
+// {{ now_unix }} and {{ git_short_sha }}. Non-token values pass through.
+func resolveToken(v string) string {
+	switch strings.TrimSpace(v) {
+	case "{{ now_unix }}", "{{now_unix}}":
+		return strconv.FormatInt(time.Now().Unix(), 10)
+	case "{{ git_short_sha }}", "{{git_short_sha}}":
+		out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
+		if err != nil {
+			return "unknown"
+		}
+		return strings.TrimSpace(string(out))
+	default:
+		return v
+	}
+}
+
+// envTag returns the env-wide image tag with tokens resolved (e.g. a git sha for
+// the Pi). Empty when the env declares no tag.
+func (e *Engine) envTag() string {
+	if e.Cfg.Env.Tag == "" {
+		return ""
+	}
+	return resolveToken(e.Cfg.Env.Tag)
+}
 
 // DeployK8s runs the k8s pattern deploy sequence:
 //
@@ -19,17 +47,21 @@ func (e *Engine) DeployK8s() error {
 		return err
 	}
 	c := e.Cfg
+	envTag := e.envTag()
+	images := c.SortedImages() // deterministic order (map → sorted by name)
+	scan := c.Scan()
 	// The apply binding's config carries helm specifics (chart, values, set, repos).
 	apply, _ := e.binding("apply")
 	chart, _ := apply.Config["chart"].(string)
 
 	// 1. build-artifact — per image. Identity + the build tool's config (platform)
 	//    are merged by the engine; the pattern passes only per-image dynamics.
-	for _, img := range c.App.Images {
+	for _, img := range images {
 		if _, err := e.Step("build-artifact", map[string]any{
-			"ref":     c.ImageRef(img),
-			"context": img.Context,
-			"args":    img.Args,
+			"ref":      c.ImageRef(img, envTag),
+			"context":  img.Context,
+			"args":     img.Args,
+			"platform": c.Platform(), // resolved env ▸ app setting (buildx --platform)
 		}); err != nil {
 			return err
 		}
@@ -37,23 +69,23 @@ func (e *Engine) DeployK8s() error {
 
 	// 2. deliver-artifact — load into the node (or push), one per image. `node`/
 	//    `registry` come from the deliver binding's config; `delivery` from env.
-	for _, img := range c.App.Images {
+	for _, img := range images {
 		if _, err := e.Step("deliver-artifact", map[string]any{
-			"ref": c.ImageRef(img),
+			"ref": c.ImageRef(img, envTag),
 		}); err != nil {
 			return err
 		}
 	}
 
 	// 3. scan-artifact — first-party images only, threshold from .grype.yaml.
-	for _, name := range c.App.Scan.Images {
-		ref, err := imageRefByName(c, name)
+	for _, name := range scan.Images {
+		ref, err := imageRefByName(c, name, envTag)
 		if err != nil {
 			return err
 		}
 		if _, err := e.Step("scan-artifact", map[string]any{
 			"target":  ref,
-			"fail_on": c.App.Scan.FailOn,
+			"fail_on": scan.FailOn,
 		}); err != nil {
 			return err
 		}
@@ -157,13 +189,12 @@ func defaultTool(pattern, step string) (string, bool) {
 	return "", false
 }
 
-func imageRefByName(c config.Merged, name string) (string, error) {
-	for _, img := range c.App.Images {
-		if img.Name == name {
-			return c.ImageRef(img), nil
-		}
+func imageRefByName(c config.Merged, name, envTag string) (string, error) {
+	img, ok := c.ImageByName(name)
+	if !ok {
+		return "", fmt.Errorf("scan image %q not found in app.images", name)
 	}
-	return "", fmt.Errorf("scan image %q not found in app.images", name)
+	return c.ImageRef(img, envTag), nil
 }
 
 // resolveSet expands template tokens in the apply binding's `set` config

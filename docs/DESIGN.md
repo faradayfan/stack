@@ -81,18 +81,21 @@ Two layers, both under `.stack/` in the app repo:
 
 ```yaml
 name: baseline
-# Images the app builds. `context` is the docker build context; `args` optional.
+# Overridable deploy/runtime SETTINGS — the base layer. An env may override any
+# of these (env value ▸ app value ▸ built-in default): default_tag, registry,
+# platform, scan, tools_manager. Identity (name) and collections (images, checks)
+# are NOT overridable settings — they live on the app and merge by key.
+tools_manager: asdf          # how `stack setup` installs check tools
+default_tag: dev             # tag for images that don't pin their own
+# Images the app builds, KEYED BY NAME (a map, not a list). `context` is the
+# docker build context; `tag`/`args` optional. An env overrides an image by key
+# (whole-value replace) or adds one — the consistent "maps merge by key" rule.
 images:
-  - name: baseline            # the service
-    context: .
-  - name: baseline-ui
-    context: ./frontend
-  - name: baseline-postgresql
-    context: ./deploy/postgres
-  - name: baseline-mem0-api
-    context: ./deploy/mem0-api
-    args: { PATCH_OLLAMA: "1" }
-# First-party images to vuln-scan (third-party bases excluded).
+  baseline:            { context: . }                       # the service
+  baseline-ui:         { context: ./frontend }
+  baseline-postgresql: { context: ./deploy/postgres, tag: "16-pgvector" }
+  baseline-mem0-api:   { context: ./deploy/mem0-api, args: { PATCH_OLLAMA: "1" } }
+# First-party images to vuln-scan (third-party bases excluded). A `scan` setting.
 scan:
   images: [baseline, baseline-ui]
   fail_on: high              # grype threshold
@@ -113,6 +116,13 @@ settings live next to the tool (and a kustomize/podman plugin reads its OWN conf
 keys — zero schema change), while shared identity (`kube_context`, `namespace`)
 isn't duplicated across every tool that needs it.
 
+The env ALSO carries the same overridable **settings** the app has (`registry`,
+`platform`, `default_tag`, `scan`, `tools_manager`) at its root — declared once,
+not buried per-tool. An env value overrides the app's; the engine resolves
+`env ▸ app ▸ default` and feeds the result into the steps that need it (e.g. the
+resolved `platform` reaches `build-artifact`, `registry`/`tag` shape the image
+refs). This is the same "env overrides app" rule as image/check map-merge.
+
 A tool binding is **string-or-object**: a bare string when there's no config
 (`status: kubectl`), or `{ tool: …, config: {…} }` when there is.
 
@@ -128,12 +138,10 @@ remote: false                   # remote → confirm before deploy/down
 
 # --- tier 2: tool bindings + per-tool config (tier 3 = the config blocks)
 tools:
-  build-artifact:
-    tool: docker
-    config: { platform: "" }    # e.g. linux/arm64 on the Pi
+  build-artifact: docker        # platform comes from the root `platform` setting
   deliver-artifact:
     tool: docker
-    config: { node: desktop-control-plane }   # load mode; or registry: … for push
+    config: { node: desktop-control-plane }   # load mode; or push (see pi.yaml)
   scan-artifact: grype          # string form — no config
   apply:
     tool: helm
@@ -147,15 +155,22 @@ tools:
 ```
 
 ```yaml
-# .stack/pi.yaml — remote: push delivery, arm64, registry
+# .stack/pi.yaml — remote: push delivery, arm64, registry. Mostly OVERRIDES of
+# app.yaml settings, declared once at the root (not per-tool).
 pattern: k8s
 kube_context: k3s
 namespace: baseline
 image_delivery: push
 remote: true                    # → confirm before deploy/down
+registry: <REGISTRY_HOST>:5000  # setting: prefix every image ref
+platform: linux/arm64           # setting: buildx --platform target
+tag: "{{ git_short_sha }}"      # env-wide tag for images that don't pin their own
+images:
+  # per-key override: the Pi uses the OpenAI mem0 variant (no Ollama patch).
+  baseline-mem0-api: { context: ./deploy/mem0-api, tag: openai }
 tools:
-  build-artifact:  { tool: docker, config: { platform: linux/arm64 } }
-  deliver-artifact: { tool: docker, config: { registry: "<REGISTRY_HOST>:5000", tag: "{{ git_short_sha }}" } }
+  build-artifact: docker
+  deliver-artifact: docker      # buildx --push delivers during build (no-op here)
   apply:
     tool: helm
     config:

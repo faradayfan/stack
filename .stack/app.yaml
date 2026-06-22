@@ -1,4 +1,5 @@
 name: stack
+tools_manager: asdf
 checks:
-  - { name: format, tool: gofmt,    blocking: true }
-  - { name: unit,   tool: go-test,  blocking: true, args: { short: true } }
+  format: { tool: gofmt,   blocking: true }
+  unit:   { tool: go-test, blocking: true, args: { short: true } }

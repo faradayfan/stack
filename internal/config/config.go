@@ -7,22 +7,36 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Image is one buildable artifact.
+// Image is one buildable artifact. Its name is the MAP KEY in `images`, so there
+// is no `name` field here.
 type Image struct {
-	Name    string            `yaml:"name"`
+	Name    string            `yaml:"-"` // filled from the map key (not parsed)
 	Context string            `yaml:"context"`
-	Tag     string            `yaml:"tag,omitempty"`  // defaults to App.DefaultTag
+	Tag     string            `yaml:"tag,omitempty"`  // explicit tag wins over the env/default tag
 	Args    map[string]string `yaml:"args,omitempty"` // --build-arg
 }
 
 // Scan declares which first-party images to vuln-gate and at what threshold.
 type Scan struct {
-	Images []string `yaml:"images"`
+	Images []string `yaml:"images,omitempty"`
 	FailOn string   `yaml:"fail_on,omitempty"` // grype severity; default "high"
+}
+
+// Settings are the OVERRIDABLE deploy/runtime settings shared by App (the base
+// layer) and Env (the override layer). Resolution is env-value ▸ app-value ▸
+// built-in default (see Resolved). Identity fields (name, images, checks) are NOT
+// here — they are not env-overridable by design.
+type Settings struct {
+	ToolsManager string `yaml:"tools_manager,omitempty"`
+	DefaultTag   string `yaml:"default_tag,omitempty"` // tag for images that don't pin their own
+	Registry     string `yaml:"registry,omitempty"`    // push: prefix image refs
+	Platform     string `yaml:"platform,omitempty"`    // push: buildx --platform
+	Scan         *Scan  `yaml:"scan,omitempty"`        // pointer → distinguish "unset" from zero for override
 }
 
 // HelmRepo is a chart repo to register before `helm dependency build`.
@@ -37,9 +51,10 @@ type Deps struct {
 }
 
 // Check is one verification entry in the `stack check` flow — "run one tool, get
-// pass/fail". Atomic by design: if a check needs real logic, it's a hook instead.
+// pass/fail". Its name is the MAP KEY in `checks`, so there is no `name` field.
+// Atomic by design: if a check needs real logic, it's a hook instead.
 type Check struct {
-	Name     string         `yaml:"name"`
+	Name     string         `yaml:"-"`                  // filled from the map key (not parsed)
 	Tool     string         `yaml:"tool"`               // a plugin providing the `check` step
 	Blocking *bool          `yaml:"blocking,omitempty"` // nil/true → failure fails the run; false → report-only
 	After    string         `yaml:"after,omitempty"`    // depend on a prior step (e.g. build-artifact)
@@ -51,17 +66,32 @@ type Check struct {
 // IsBlocking reports whether a failure of this check fails the run (default true).
 func (c Check) IsBlocking() bool { return c.Blocking == nil || *c.Blocking }
 
-// App is .stack/app.yaml — app-wide, environment-independent.
+// SortedChecks returns the app's checks in deterministic key order, each carrying
+// its map-key Name. The check flow is env-independent, so this is on App.
+func (a App) SortedChecks() []Check {
+	keys := make([]string, 0, len(a.Checks))
+	for k := range a.Checks {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]Check, 0, len(keys))
+	for _, k := range keys {
+		c := a.Checks[k]
+		c.Name = k
+		out = append(out, c)
+	}
+	return out
+}
+
+// App is .stack/app.yaml — the BASE layer. Identity (name) + collections
+// (images, checks) live here; overridable Settings are embedded and may be
+// overridden per-env.
 type App struct {
-	Name         string  `yaml:"name"`
-	ToolsManager string  `yaml:"tools_manager,omitempty"` // e.g. "asdf"; empty → setup errors
-	DefaultTag   string  `yaml:"default_tag,omitempty"`   // tag when an Image omits one; default "dev"
-	Images       []Image `yaml:"images"`
-	Scan         Scan    `yaml:"scan"`
-	Checks       []Check `yaml:"checks,omitempty"` // the `stack check` flow
-	// Hooks: name → command (M1 keeps the simple string form; the typed
-	// env-mapping form lands with the native/seed milestone).
-	Hooks map[string]string `yaml:"hooks,omitempty"`
+	Name     string            `yaml:"name"`
+	Settings `yaml:",inline"`  // overridable base settings
+	Images   map[string]Image  `yaml:"images,omitempty"` // key = image name
+	Checks   map[string]Check  `yaml:"checks,omitempty"` // key = check name
+	Hooks    map[string]string `yaml:"hooks,omitempty"`
 }
 
 // ToolBinding binds an abstract step to a tool plus that tool's per-step config.
@@ -106,8 +136,16 @@ type Env struct {
 	KubeContext   string `yaml:"kube_context,omitempty"`
 	Namespace     string `yaml:"namespace,omitempty"`
 	ImageDelivery string `yaml:"image_delivery,omitempty"` // load | push
+	Tag           string `yaml:"tag,omitempty"`            // env-wide image tag (may be a template, e.g. {{ git_short_sha }})
 	Remote        bool   `yaml:"remote,omitempty"`         // → confirm before deploy/down
 	ReleaseName   string `yaml:"release_name,omitempty"`
+
+	// overridable settings — env values override the app's (env ▸ app ▸ default)
+	Settings `yaml:",inline"`
+
+	// per-key overrides of the app's collections (merged by key, env wins)
+	Images map[string]Image `yaml:"images,omitempty"`
+	Checks map[string]Check `yaml:"checks,omitempty"`
 
 	// tier 2+3 — step → tool binding (+ that tool's config)
 	Tools map[string]ToolBinding `yaml:"tools"`
@@ -130,6 +168,87 @@ type Merged struct {
 	Env     Env
 }
 
+// firstNonEmpty returns the first non-empty string.
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ToolsManager resolves env ▸ app (no built-in default; empty → setup errors).
+func (m Merged) ToolsManager() string {
+	return firstNonEmpty(m.Env.Settings.ToolsManager, m.App.Settings.ToolsManager)
+}
+
+// DefaultTag resolves env ▸ app ▸ "dev".
+func (m Merged) DefaultTag() string {
+	return firstNonEmpty(m.Env.Settings.DefaultTag, m.App.Settings.DefaultTag, "dev")
+}
+
+// Registry resolves env ▸ app (empty → no registry prefix, i.e. local load).
+func (m Merged) Registry() string {
+	return firstNonEmpty(m.Env.Settings.Registry, m.App.Settings.Registry)
+}
+
+// Platform resolves env ▸ app (empty → tool default).
+func (m Merged) Platform() string {
+	return firstNonEmpty(m.Env.Settings.Platform, m.App.Settings.Platform)
+}
+
+// Scan resolves env ▸ app (whole-value override; pointer distinguishes unset).
+func (m Merged) Scan() Scan {
+	if m.Env.Settings.Scan != nil {
+		return *m.Env.Settings.Scan
+	}
+	if m.App.Settings.Scan != nil {
+		return *m.App.Settings.Scan
+	}
+	return Scan{}
+}
+
+// Images returns the app images overlaid with the env's per-key overrides (env
+// wins per key; env may also add images), each carrying its map-key Name.
+func (m Merged) Images() map[string]Image {
+	out := map[string]Image{}
+	for k, v := range m.App.Images {
+		out[k] = v
+	}
+	for k, v := range m.Env.Images {
+		out[k] = v // whole-value override per key (no field-level merge)
+	}
+	return out
+}
+
+// SortedImages returns the merged images in deterministic key order, each named.
+func (m Merged) SortedImages() []Image {
+	merged := m.Images()
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]Image, 0, len(keys))
+	for _, k := range keys {
+		img := merged[k]
+		img.Name = k
+		out = append(out, img)
+	}
+	return out
+}
+
+// ImageByName returns the merged image for a name (with Name set).
+func (m Merged) ImageByName(name string) (Image, bool) {
+	img, ok := m.Images()[name]
+	if !ok {
+		return Image{}, false
+	}
+	img.Name = name
+	return img, true
+}
+
 // ReleaseName is the helm release name: explicit release_name, else the app name.
 func (m Merged) ReleaseName() string {
 	if m.Env.ReleaseName != "" {
@@ -138,16 +257,20 @@ func (m Merged) ReleaseName() string {
 	return m.App.Name
 }
 
-// ImageRef returns name:tag for an image (tag defaults to App.DefaultTag, then "dev").
-func (m Merged) ImageRef(img Image) string {
-	tag := img.Tag
-	if tag == "" {
-		tag = m.App.DefaultTag
+// ImageRef returns the image reference: [registry/]name:tag.
+//
+//   - registry: resolved registry prefix (push delivery), empty for local load.
+//   - tag precedence: the image's OWN tag (explicit, e.g. postgres' 16-pgvector)
+//     ▸ envTag (a resolved env-wide tag like a git sha, applied to images that
+//     don't pin their own) ▸ resolved DefaultTag. envTag is passed in already
+//     resolved (templates like {{ git_short_sha }} are expanded by the engine).
+func (m Merged) ImageRef(img Image, envTag string) string {
+	tag := firstNonEmpty(img.Tag, envTag, m.DefaultTag())
+	ref := img.Name + ":" + tag
+	if reg := m.Registry(); reg != "" {
+		ref = reg + "/" + ref
 	}
-	if tag == "" {
-		tag = "dev"
-	}
-	return img.Name + ":" + tag
+	return ref
 }
 
 // StackDir is the per-repo context directory.

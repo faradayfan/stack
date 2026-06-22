@@ -15,12 +15,12 @@ func boolp(b bool) *bool { return &b }
 func checkApp() config.App {
 	return config.App{
 		Name: "baseline",
-		Checks: []config.Check{
-			{Name: "format", Tool: "gofmt"},
-			{Name: "lint", Tool: "golangci"},
-			{Name: "unit", Tool: "go-test", Args: map[string]any{"short": true}},
-			{Name: "sast", Tool: "gosec", Blocking: boolp(false)},
-			{Name: "scan-image", Tool: "grype-image", After: "build-artifact",
+		Checks: map[string]config.Check{
+			"format": {Tool: "gofmt"},
+			"lint":   {Tool: "golangci"},
+			"unit":   {Tool: "go-test", Args: map[string]any{"short": true}},
+			"sast":   {Tool: "gosec", Blocking: boolp(false)},
+			"scan-image": {Tool: "grype-image", After: "build-artifact",
 				Args: map[string]any{"target": "baseline:dev"}},
 		},
 	}
@@ -89,9 +89,9 @@ func TestCheck_BlockingSemantics(t *testing.T) {
 	// command by binding to a tool whose check command is exit-1. We use args to
 	// flip gofmt into a guaranteed-fail by scanning a bogus path is overkill —
 	// instead assert overallPassed semantics directly through results.
-	app := config.App{Name: "x", Checks: []config.Check{
-		{Name: "blocker", Tool: "gofmt"}, // blocking (default)
-		{Name: "soft", Tool: "gosec", Blocking: boolp(false)},
+	app := config.App{Name: "x", Checks: map[string]config.Check{
+		"blocker": {Tool: "gofmt"}, // blocking (default)
+		"soft":    {Tool: "gosec", Blocking: boolp(false)},
 	}}
 	e := engine.NewForChecks(app, reg, true) // dry-run → both "pass"
 	var buf bytes.Buffer
@@ -107,10 +107,10 @@ func TestCheck_BlockingSemantics(t *testing.T) {
 // other checks still run. Regression: a missing tool used to abort the whole run.
 func TestCheck_MissingToolDoesNotAbortRun(t *testing.T) {
 	reg, _ := plugins.Load()
-	app := config.App{Name: "x", Checks: []config.Check{
-		{Name: "good", Tool: "gofmt"},             // resolvable
-		{Name: "missing", Tool: "does-not-exist"}, // unknown tool
-		{Name: "also-good", Tool: "go-test", Args: map[string]any{"short": true}},
+	app := config.App{Name: "x", Checks: map[string]config.Check{
+		"good":      {Tool: "gofmt"},          // resolvable
+		"missing":   {Tool: "does-not-exist"}, // unknown tool
+		"also-good": {Tool: "go-test", Args: map[string]any{"short": true}},
 	}}
 	e := engine.NewForChecks(app, reg, true) // dry-run: resolvable ones "pass"
 	var buf bytes.Buffer
