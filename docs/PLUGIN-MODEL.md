@@ -135,6 +135,33 @@ common tools; allow repo-local overrides in `.stack/plugins/` and (future)
 user-level `~/.config/stack/plugins/`. So you get docker/helm/grype out of the
 box, and can drop in `podman.yaml` without forking.
 
+**Per-tool config schema (validation).** A manifest declares the config keys a
+tool accepts under its env binding (`tools.<step>.config`), so stack validates
+the binding up front — rejecting **unknown keys** (typo-catching) before any
+command runs. `required` is intentionally NOT used for multi-step tools (helm
+provides apply+wait-ready+teardown+status; `chart` is needed only by apply, so a
+blanket required would wrongly reject a bare `wait-ready: helm`); a genuinely
+missing value fails clearly at its step.
+
+```yaml
+# helm.yaml
+config:
+  - { name: chart }     # unknown-key rejection applies uniformly
+  - { name: values }
+  - { name: set }
+  - { name: repos }
+```
+
+The env binding then carries the config, validated against this schema:
+
+```yaml
+# .stack/local-k8s.yaml
+tools:
+  apply:
+    tool: helm
+    config: { chart: deploy/charts/x, values: [v.yaml] }   # a typo'd key errors
+```
+
 ## Layer 3 — Environment context binds step → tool — DECIDED: explicit in context
 
 The `.stack/<env>.yaml` (from `DESIGN.md`) gains an explicit `tools:` mapping.

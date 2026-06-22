@@ -42,17 +42,24 @@ func NewForChecks(app config.App, reg *plugins.Registry, dryRun bool) *Engine {
 // pattern default (defaultTool) when the context omits it — so a minimal context
 // still tears down/observes. A step with neither is an error (mis-wired context).
 // Returns the rendered command (useful for tests / fixtures) even on dry-run.
+//
+// The template inputs are composed (lowest→highest precedence): env IDENTITY
+// (kube_context, namespace, delivery) < the step's tool CONFIG (from its binding)
+// < the caller-supplied dynamic `inputs` (e.g. per-image `ref`). So tool-specific
+// settings live in the binding's config, shared identity comes from the env root,
+// and the pattern only passes the truly dynamic bits.
 func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
-	tool, ok := e.Cfg.Env.Tools[step]
+	binding, ok := e.Cfg.Env.Tools[step]
 	if !ok {
-		tool, ok = defaultTool(e.Cfg.Env.Pattern, step)
+		if t, has := defaultTool(e.Cfg.Env.Pattern, step); has {
+			binding = config.ToolBinding{Tool: t}
+		} else {
+			return "", fmt.Errorf("no tool bound for step %q in env %q (and no pattern default)", step, e.Cfg.EnvName)
+		}
 	}
+	m, ok := e.Plugins.Get(binding.Tool)
 	if !ok {
-		return "", fmt.Errorf("no tool bound for step %q in env %q (and no pattern default)", step, e.Cfg.EnvName)
-	}
-	m, ok := e.Plugins.Get(tool)
-	if !ok {
-		return "", fmt.Errorf("step %q bound to unknown tool %q", step, tool)
+		return "", fmt.Errorf("step %q bound to unknown tool %q", step, binding.Tool)
 	}
 	version, err := e.detect(m)
 	if err != nil {
@@ -63,16 +70,59 @@ func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("tool %q (v%s) does not provide step %q", tool, version, step)
+		return "", fmt.Errorf("tool %q (v%s) does not provide step %q", binding.Tool, version, step)
 	}
-	cmd, err := render(tmpl, inputs)
+	cmd, err := render(tmpl, e.stepInputs(binding, inputs))
 	if err != nil {
-		return "", fmt.Errorf("render %q for step %q: %w", tool, step, err)
+		return "", fmt.Errorf("render %q for step %q: %w", binding.Tool, step, err)
 	}
 	if err := e.run(cmd); err != nil {
 		return cmd, err
 	}
 	return cmd, nil
+}
+
+// ValidateBindings checks every tool binding's config against its manifest's
+// declared config schema (required keys present, no unknown keys). Run before a
+// flow so a typo'd config key fails up front with a clear message, not at
+// command-render time.
+func (e *Engine) ValidateBindings() error {
+	for step, b := range e.Cfg.Env.Tools {
+		m, ok := e.Plugins.Get(b.Tool)
+		if !ok {
+			return fmt.Errorf("step %q: unknown tool %q", step, b.Tool)
+		}
+		if err := m.ValidateConfig(b.Config); err != nil {
+			return fmt.Errorf("step %q: %w", step, err)
+		}
+	}
+	return nil
+}
+
+// stepInputs composes env identity + the step's tool config + the dynamic inputs.
+func (e *Engine) stepInputs(b config.ToolBinding, dynamic map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, v := range e.Cfg.Env.Identity() {
+		out[k] = v
+	}
+	for k, v := range b.Config {
+		out[k] = v
+	}
+	for k, v := range dynamic {
+		out[k] = v
+	}
+	return out
+}
+
+// binding returns the resolved binding for a step (with pattern default).
+func (e *Engine) binding(step string) (config.ToolBinding, bool) {
+	if b, ok := e.Cfg.Env.Tools[step]; ok {
+		return b, true
+	}
+	if t, ok := defaultTool(e.Cfg.Env.Pattern, step); ok {
+		return config.ToolBinding{Tool: t}, true
+	}
+	return config.ToolBinding{}, false
 }
 
 // RunRaw runs (or prints) a literal command not driven by a tool manifest —

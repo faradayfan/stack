@@ -15,9 +15,16 @@ import (
 //
 // It produces exactly the command stream the M1 worked example specifies.
 func (e *Engine) DeployK8s() error {
+	if err := e.ValidateBindings(); err != nil {
+		return err
+	}
 	c := e.Cfg
+	// The apply binding's config carries helm specifics (chart, values, set, repos).
+	apply, _ := e.binding("apply")
+	chart, _ := apply.Config["chart"].(string)
 
-	// 1. build-artifact — one per image.
+	// 1. build-artifact — per image. Identity + the build tool's config (platform)
+	//    are merged by the engine; the pattern passes only per-image dynamics.
 	for _, img := range c.App.Images {
 		if _, err := e.Step("build-artifact", map[string]any{
 			"ref":     c.ImageRef(img),
@@ -28,13 +35,11 @@ func (e *Engine) DeployK8s() error {
 		}
 	}
 
-	// 2. deliver-artifact — load into the node (or push), one per image.
+	// 2. deliver-artifact — load into the node (or push), one per image. `node`/
+	//    `registry` come from the deliver binding's config; `delivery` from env.
 	for _, img := range c.App.Images {
 		if _, err := e.Step("deliver-artifact", map[string]any{
-			"ref":      c.ImageRef(img),
-			"delivery": deliveryOrDefault(c.Env.ImageDelivery),
-			"node":     c.Env.Node,
-			"registry": c.Env.Registry,
+			"ref": c.ImageRef(img),
 		}); err != nil {
 			return err
 		}
@@ -54,70 +59,61 @@ func (e *Engine) DeployK8s() error {
 		}
 	}
 
-	// 4. chart deps (helm repo add + dependency build) — engine-level preamble.
-	for _, repo := range c.Env.Deps.HelmRepos {
-		if err := e.RunRaw(fmt.Sprintf("helm repo add %s %s", repo.Name, repo.URL)); err != nil {
+	// 4. chart deps (helm repo add + dependency build) — from the apply binding's
+	//    `repos` config; engine-level preamble.
+	repos := toRepos(apply.Config["repos"])
+	for _, r := range repos {
+		if err := e.RunRaw(fmt.Sprintf("helm repo add %s %s", r.Name, r.URL)); err != nil {
 			return err
 		}
 	}
-	if c.Env.Chart != "" && len(c.Env.Deps.HelmRepos) > 0 {
-		if err := e.RunRaw("helm dependency build " + c.Env.Chart); err != nil {
+	if chart != "" && len(repos) > 0 {
+		if err := e.RunRaw("helm dependency build " + chart); err != nil {
 			return err
 		}
 	}
 
-	// 5. apply (helm upgrade --install) with resolved --set values.
-	set, err := resolveSet(c.Env.HelmSet)
+	// 5. apply (helm upgrade --install). chart/values/set come from the binding
+	//    config (merged by the engine); `set` tokens resolved here; release added.
+	set, err := resolveSet(apply.Config["set"])
 	if err != nil {
 		return err
 	}
 	_, err = e.Step("apply", map[string]any{
-		"release":      c.ReleaseName(),
-		"chart":        c.Env.Chart,
-		"kube_context": c.Env.KubeContext,
-		"namespace":    c.Env.Namespace,
-		"values":       c.Env.Values,
-		"set":          set,
+		"release": c.ReleaseName(),
+		"set":     set, // resolved (overrides the raw config.set)
 	})
 	return err
 }
 
 // DownK8s tears down: helm uninstall, and (with destroy) drop PVCs via kubectl.
 func (e *Engine) DownK8s(destroy bool) error {
-	c := e.Cfg
+	// release is dynamic; kube_context/namespace come from env identity (merged).
 	if _, err := e.Step("teardown", map[string]any{
-		"release":      c.ReleaseName(),
-		"kube_context": c.Env.KubeContext,
-		"namespace":    c.Env.Namespace,
+		"release": e.Cfg.ReleaseName(),
 	}); err != nil {
 		return err
 	}
 	if destroy {
-		// PVC deletion is kubectl's teardown variant; bind it explicitly so the
-		// command renders even though the env's `teardown` step is helm's.
-		if cmd, err := e.renderTool("kubectl", "teardown", map[string]any{
-			"kube_context": c.Env.KubeContext,
-			"namespace":    c.Env.Namespace,
-		}); err != nil {
+		// PVC deletion is kubectl's teardown variant; render it explicitly even
+		// though the env's `teardown` step is helm's. Identity merged in.
+		cmd, err := e.renderTool("kubectl", "teardown", nil)
+		if err != nil {
 			return err
-		} else {
-			return e.RunRaw(cmd)
 		}
+		return e.RunRaw(cmd)
 	}
 	return nil
 }
 
-// StatusK8s shows the namespace's pods.
+// StatusK8s shows the namespace's pods. (kube_context/namespace from identity.)
 func (e *Engine) StatusK8s() error {
-	_, err := e.Step("status", map[string]any{
-		"kube_context": e.Cfg.Env.KubeContext,
-		"namespace":    e.Cfg.Env.Namespace,
-	})
+	_, err := e.Step("status", nil)
 	return err
 }
 
 // renderTool renders a specific tool's step command without it being the bound
-// tool for that step (used by down --destroy → kubectl).
+// tool for that step (used by down --destroy → kubectl). Identity is merged in.
 func (e *Engine) renderTool(tool, step string, inputs map[string]any) (string, error) {
 	m, ok := e.Plugins.Get(tool)
 	if !ok {
@@ -131,7 +127,14 @@ func (e *Engine) renderTool(tool, step string, inputs map[string]any) (string, e
 	if err != nil || !ok {
 		return "", fmt.Errorf("tool %q does not provide step %q", tool, step)
 	}
-	return render(tmpl, inputs)
+	merged := map[string]any{}
+	for k, val := range e.Cfg.Env.Identity() {
+		merged[k] = val
+	}
+	for k, val := range inputs {
+		merged[k] = val
+	}
+	return render(tmpl, merged)
 }
 
 // defaultTool returns the conventional tool for a step in a pattern when the
@@ -154,13 +157,6 @@ func defaultTool(pattern, step string) (string, bool) {
 	return "", false
 }
 
-func deliveryOrDefault(d string) string {
-	if d == "" {
-		return "load"
-	}
-	return d
-}
-
 func imageRefByName(c config.Merged, name string) (string, error) {
 	for _, img := range c.App.Images {
 		if img.Name == name {
@@ -170,16 +166,43 @@ func imageRefByName(c config.Merged, name string) (string, error) {
 	return "", fmt.Errorf("scan image %q not found in app.images", name)
 }
 
-// resolveSet expands template tokens in helm_set values ({{ now_unix }}).
-func resolveSet(in map[string]string) (map[string]string, error) {
+// resolveSet expands template tokens in the apply binding's `set` config
+// ({{ now_unix }}). The raw value is a map[string]any from YAML.
+func resolveSet(raw any) (map[string]string, error) {
 	out := map[string]string{}
-	for k, v := range in {
-		switch v {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return out, nil // no set block
+	}
+	for k, v := range m {
+		s := fmt.Sprint(v)
+		switch s {
 		case "{{ now_unix }}", "{{now_unix}}":
 			out[k] = strconv.FormatInt(time.Now().Unix(), 10)
 		default:
-			out[k] = v
+			out[k] = s
 		}
 	}
 	return out, nil
+}
+
+// toRepos parses the apply binding's `repos` config (a list of {name,url}).
+func toRepos(raw any) []config.HelmRepo {
+	list, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var out []config.HelmRepo
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		url, _ := m["url"].(string)
+		if name != "" && url != "" {
+			out = append(out, config.HelmRepo{Name: name, URL: url})
+		}
+	}
+	return out
 }

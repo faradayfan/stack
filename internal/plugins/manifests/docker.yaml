@@ -1,6 +1,11 @@
 tool: docker
 detect: "docker version --format {{.Client.Version}}"
 provides: [build-artifact, deliver-artifact]
+config:
+  - { name: node }
+  - { name: registry }
+  - { name: platform }
+  - { name: tag }
 variants:
   # Modern docker (buildx default). For local single-arch loads we still use the
   # classic build + ctr-import path (load mode), and reserve buildx --push for the

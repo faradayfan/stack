@@ -1,6 +1,16 @@
 tool: helm
 detect: "helm version --template {{.Version}}"
 provides: [render-config, apply, wait-ready, teardown, status]
+# Config keys helm accepts. NOTE: `required` is not used here — helm provides
+# several steps (apply needs `chart`, but wait-ready/teardown/status don't), so a
+# blanket per-tool required would wrongly reject a bare `wait-ready: helm`
+# binding. Unknown-key rejection (typo-catching) is the validation that applies
+# uniformly; a genuinely missing chart fails clearly at the apply step.
+config:
+  - { name: chart }
+  - { name: values }
+  - { name: set }
+  - { name: repos }
 steps:
   # apply = upgrade --install; values + --set + namespace/context come from the env.
   apply:
