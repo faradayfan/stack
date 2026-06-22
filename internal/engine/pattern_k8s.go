@@ -197,8 +197,10 @@ func imageRefByName(c config.Merged, name, envTag string) (string, error) {
 	return c.ImageRef(img, envTag), nil
 }
 
-// resolveSet expands template tokens in the apply binding's `set` config
-// ({{ now_unix }}). The raw value is a map[string]any from YAML.
+// resolveSet expands template tokens in the apply binding's `set` config. It
+// supports the same tokens as the rest of the engine ({{ now_unix }} and
+// {{ git_short_sha }}) via resolveToken, so e.g. `image.tag: "{{ git_short_sha }}"`
+// matches the tag the build/push step used. The raw value is a map[string]any.
 func resolveSet(raw any) (map[string]string, error) {
 	out := map[string]string{}
 	m, ok := raw.(map[string]any)
@@ -206,13 +208,7 @@ func resolveSet(raw any) (map[string]string, error) {
 		return out, nil // no set block
 	}
 	for k, v := range m {
-		s := fmt.Sprint(v)
-		switch s {
-		case "{{ now_unix }}", "{{now_unix}}":
-			out[k] = strconv.FormatInt(time.Now().Unix(), 10)
-		default:
-			out[k] = s
-		}
+		out[k] = resolveToken(fmt.Sprint(v))
 	}
 	return out, nil
 }

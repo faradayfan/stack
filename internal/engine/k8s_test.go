@@ -155,6 +155,37 @@ func TestDeployK8s_PushUsesBuildx(t *testing.T) {
 	}
 }
 
+// TestDeployK8s_SetResolvesGitShortSha: a `set:` value of {{ git_short_sha }}
+// must render the actual git SHA (not the literal token), so e.g. image.tag
+// matches the tag the build/push step used. Regression: resolveSet only handled
+// {{ now_unix }}, leaving {{ git_short_sha }} as a literal → chart fell back to
+// its default tag → cluster pulled an image that was never pushed.
+func TestDeployK8s_SetResolvesGitShortSha(t *testing.T) {
+	reg, err := plugins.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := piLikeCfg()
+	cfg.Env.Tools["apply"] = config.ToolBinding{Tool: "helm", Config: map[string]any{
+		"chart": "deploy/charts/baseline",
+		"set":   map[string]any{"image.tag": "{{ git_short_sha }}"},
+	}}
+	e := engine.New(cfg, reg, true)
+	var buf bytes.Buffer
+	e.Out = &buf
+	if err := e.DeployK8s(); err != nil {
+		t.Fatalf("dry-run errored: %v", err)
+	}
+	got := buf.String()
+	if strings.Contains(got, "image.tag={{") || strings.Contains(got, "git_short_sha") {
+		t.Errorf("set value {{ git_short_sha }} was not resolved:\n%s", got)
+	}
+	// The build refs use the same resolved tag — image.tag must match one of them.
+	if !strings.Contains(got, "--set image.tag=") {
+		t.Errorf("expected a resolved --set image.tag=<sha>:\n%s", got)
+	}
+}
+
 func TestDownK8s(t *testing.T) {
 	got := dryRun(t, func(e *engine.Engine) error { return e.DownK8s(false) })
 	want := "helm --kube-context docker-desktop -n baseline uninstall baseline"
