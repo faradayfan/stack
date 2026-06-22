@@ -31,9 +31,9 @@ type CheckResult struct {
 // are SKIPPED in standalone `stack check` — they belong to a combined deploy+check
 // flow where the artifact exists. They run there, not here.
 func (e *Engine) Check(only []string) ([]CheckResult, bool, error) {
-	checks := selectChecks(e.Cfg.App.SortedChecks(), only)
+	checks := selectChecks(e.Cfg.Pattern.SortedChecks(), only)
 	if len(checks) == 0 {
-		return nil, true, fmt.Errorf("no checks to run (declare `checks:` in .stack/app.yaml)")
+		return nil, true, fmt.Errorf("no checks to run (declare `checks:` under the pattern in .stack/app.yaml)")
 	}
 
 	// Resolve each check to a command. A resolve failure (unknown tool, tool

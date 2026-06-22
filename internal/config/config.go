@@ -1,6 +1,14 @@
-// Package config loads and merges the two stack context-file layers:
-// .stack/app.yaml (app-wide, environment-independent) and .stack/<env>.yaml
-// (one per environment). The merged result drives the engine.
+// Package config loads the stack context files and resolves them into the
+// pattern the engine runs.
+//
+// Schema v2 (see docs/SCHEMA-V2.md): .stack/app.yaml declares the deployment
+// shapes the app supports as `patterns.<name>` — each a complete template (its
+// type, images, per-step tool+config, scan policy, checks, hooks, identity). A
+// .stack/<env>.yaml selects one pattern (`pattern: <name>`) and deep-merges its
+// overrides into that template.
+//
+// The merge rule is uniform everywhere: env value ▸ pattern template ▸ default;
+// maps merge by key, scalars replace, lists replace. Nothing else to learn.
 package config
 
 import (
@@ -12,31 +20,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Image is one buildable artifact. Its name is the MAP KEY in `images`, so there
-// is no `name` field here.
+// Image is one buildable artifact. Its name is the MAP KEY in `images`, so its
+// Name is filled from the key, not parsed.
 type Image struct {
-	Name    string            `yaml:"-"` // filled from the map key (not parsed)
+	Name    string            `yaml:"-"`
 	Context string            `yaml:"context"`
 	Tag     string            `yaml:"tag,omitempty"`  // explicit tag wins over the env/default tag
 	Args    map[string]string `yaml:"args,omitempty"` // --build-arg
 }
 
-// Scan declares which first-party images to vuln-gate and at what threshold.
+// Scan is the scan step's policy: which first-party images to vuln-gate and the
+// grype threshold. It lives in the same `scan:` block as the scan tool.
 type Scan struct {
 	Images []string `yaml:"images,omitempty"`
 	FailOn string   `yaml:"fail_on,omitempty"` // grype severity; default "high"
-}
-
-// Settings are the OVERRIDABLE deploy/runtime settings shared by App (the base
-// layer) and Env (the override layer). Resolution is env-value ▸ app-value ▸
-// built-in default (see Resolved). Identity fields (name, images, checks) are NOT
-// here — they are not env-overridable by design.
-type Settings struct {
-	ToolsManager string `yaml:"tools_manager,omitempty"`
-	DefaultTag   string `yaml:"default_tag,omitempty"` // tag for images that don't pin their own
-	Registry     string `yaml:"registry,omitempty"`    // push: prefix image refs
-	Platform     string `yaml:"platform,omitempty"`    // push: buildx --platform
-	Scan         *Scan  `yaml:"scan,omitempty"`        // pointer → distinguish "unset" from zero for override
 }
 
 // HelmRepo is a chart repo to register before `helm dependency build`.
@@ -45,258 +42,142 @@ type HelmRepo struct {
 	URL  string `yaml:"url"`
 }
 
-// Deps are prerequisites resolved before render/apply.
-type Deps struct {
-	HelmRepos []HelmRepo `yaml:"helm_repos,omitempty"`
-}
-
 // Check is one verification entry in the `stack check` flow — "run one tool, get
-// pass/fail". Its name is the MAP KEY in `checks`, so there is no `name` field.
-// Atomic by design: if a check needs real logic, it's a hook instead.
+// pass/fail". Its name is the MAP KEY in a pattern's `checks`.
 type Check struct {
-	Name     string         `yaml:"-"`                  // filled from the map key (not parsed)
-	Tool     string         `yaml:"tool"`               // a plugin providing the `check` step
+	Name     string         `yaml:"-"`
+	Tool     string         `yaml:"tool"`
 	Blocking *bool          `yaml:"blocking,omitempty"` // nil/true → failure fails the run; false → report-only
 	After    string         `yaml:"after,omitempty"`    // depend on a prior step (e.g. build-artifact)
 	Serial   bool           `yaml:"serial,omitempty"`   // must not run alongside other checks
 	Dir      string         `yaml:"dir,omitempty"`      // run from this subdir (e.g. frontend)
-	Args     map[string]any `yaml:"args,omitempty"`     // passed as template inputs to the tool's check command
+	Args     map[string]any `yaml:"args,omitempty"`     // template inputs to the tool's check command
 }
 
 // IsBlocking reports whether a failure of this check fails the run (default true).
 func (c Check) IsBlocking() bool { return c.Blocking == nil || *c.Blocking }
 
-// SortedChecks returns the app's checks in deterministic key order, each carrying
-// its map-key Name. The check flow is env-independent, so this is on App.
-func (a App) SortedChecks() []Check {
-	keys := make([]string, 0, len(a.Checks))
-	for k := range a.Checks {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]Check, 0, len(keys))
-	for _, k := range keys {
-		c := a.Checks[k]
-		c.Name = k
-		out = append(out, c)
-	}
-	return out
-}
-
-// App is .stack/app.yaml — the BASE layer. Identity (name) + collections
-// (images, checks) live here; overridable Settings are embedded and may be
-// overridden per-env.
-type App struct {
-	Name     string            `yaml:"name"`
-	Settings `yaml:",inline"`  // overridable base settings
-	Images   map[string]Image  `yaml:"images,omitempty"` // key = image name
-	Checks   map[string]Check  `yaml:"checks,omitempty"` // key = check name
-	Hooks    map[string]string `yaml:"hooks,omitempty"`
-}
-
-// ToolBinding binds an abstract step to a tool plus that tool's per-step config.
-// It accepts two YAML forms (string-or-object):
-//
-//	scan-artifact: grype                       # shorthand, no config
-//	apply: { tool: helm, config: { chart: … } } # full form
-type ToolBinding struct {
+// StepBlock is one abstract step's wiring inside a pattern: which tool performs
+// it, plus that step's config/policy. The recognized fields (Tool) are typed; the
+// rest of the block (chart, values, set, repos, node, delivery, images, fail_on,
+// …) stays in Config so each tool reads its own keys with zero schema change. A
+// step block decodes from a bare string ("build: docker") or an object.
+type StepBlock struct {
 	Tool   string         `yaml:"tool"`
-	Config map[string]any `yaml:"config,omitempty"`
+	Config map[string]any `yaml:"-"` // every non-`tool` key in the block
 }
 
-// UnmarshalYAML implements the string-or-object decoding.
-func (b *ToolBinding) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind == yaml.ScalarNode { // bare string → tool name, no config
-		b.Tool = node.Value
+// Pattern is one deployment shape (patterns.<name> in app.yaml). It is the
+// complete template: engine type, identity, images, per-step blocks, checks,
+// hooks. An env merges its overrides into a copy of this.
+type Pattern struct {
+	Type string `yaml:"type"` // engine contract: k8s | native | compose
+
+	// identity — properties of the deployment shape (env may override).
+	KubeContext   string `yaml:"kube_context,omitempty"`
+	Namespace     string `yaml:"namespace,omitempty"`
+	ImageDelivery string `yaml:"image_delivery,omitempty"` // load | push
+	Registry      string `yaml:"registry,omitempty"`
+	Platform      string `yaml:"platform,omitempty"`
+	Tag           string `yaml:"tag,omitempty"` // env-wide tag (may be a template, e.g. {{ git_short_sha }})
+	Remote        bool   `yaml:"remote,omitempty"`
+	ReleaseName   string `yaml:"release_name,omitempty"`
+	DefaultTag    string `yaml:"default_tag,omitempty"`
+
+	Images map[string]Image     `yaml:"images,omitempty"`
+	Steps  map[string]StepBlock `yaml:"-"` // build/deliver/scan/apply/wait_ready/status/render
+
+	Checks map[string]Check  `yaml:"checks,omitempty"`
+	Hooks  map[string]string `yaml:"hooks,omitempty"`
+}
+
+// stepKeys are the pattern keys that decode into Steps (each a StepBlock). They
+// are recognized by name so the rest of the pattern keys stay strongly typed.
+var stepKeys = map[string]bool{
+	"build": true, "deliver": true, "scan": true, "render": true,
+	"apply": true, "wait_ready": true, "status": true, "logs": true,
+	"teardown": true,
+}
+
+// App is .stack/app.yaml: app-global identity + the patterns it supports.
+type App struct {
+	Name         string             `yaml:"name"`
+	ToolsManager string             `yaml:"tools_manager,omitempty"`
+	Patterns     map[string]Pattern `yaml:"patterns"`
+}
+
+// Resolved is one pattern resolved for a run (template merged with the selected
+// env's overrides). The engine consumes this — it never sees the raw layers.
+type Resolved struct {
+	App          string // app name
+	ToolsManager string // app-global (for the setup flow)
+	EnvName      string // selected env (empty for the check flow)
+	Name         string // pattern name
+	Pattern      Pattern
+}
+
+// --- decoding: patterns and step blocks pull their "extra" keys into maps ------
+
+// UnmarshalYAML for StepBlock accepts a bare string (tool, no config) or an
+// object whose `tool` is typed and whose remaining keys become Config.
+func (s *StepBlock) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode { // "build: docker"
+		s.Tool = node.Value
 		return nil
 	}
-	// object form
-	type raw ToolBinding
-	var r raw
-	if err := node.Decode(&r); err != nil {
+	var raw map[string]any
+	if err := node.Decode(&raw); err != nil {
 		return err
 	}
-	*b = ToolBinding(r)
-	if b.Tool == "" {
-		return fmt.Errorf("tool binding object must set `tool`")
+	if t, ok := raw["tool"].(string); ok {
+		s.Tool = t
+	}
+	delete(raw, "tool")
+	if len(raw) > 0 {
+		s.Config = raw
 	}
 	return nil
 }
 
-// Env is .stack/<env>.yaml — one per environment.
-//
-// Three tiers: (1) environment IDENTITY at the root (cross-tool, merged into
-// every step's inputs); (2) tool BINDINGS in `tools` (step → tool); (3) per-tool
-// CONFIG inside each binding. The engine merges identity + a step's tool config
-// into that step's template inputs.
-type Env struct {
-	Pattern string `yaml:"pattern"` // k8s | native | compose
-
-	// tier 1 — environment identity (cross-tool)
-	KubeContext   string `yaml:"kube_context,omitempty"`
-	Namespace     string `yaml:"namespace,omitempty"`
-	ImageDelivery string `yaml:"image_delivery,omitempty"` // load | push
-	Tag           string `yaml:"tag,omitempty"`            // env-wide image tag (may be a template, e.g. {{ git_short_sha }})
-	Remote        bool   `yaml:"remote,omitempty"`         // → confirm before deploy/down
-	ReleaseName   string `yaml:"release_name,omitempty"`
-
-	// overridable settings — env values override the app's (env ▸ app ▸ default)
-	Settings `yaml:",inline"`
-
-	// per-key overrides of the app's collections (merged by key, env wins)
-	Images map[string]Image `yaml:"images,omitempty"`
-	Checks map[string]Check `yaml:"checks,omitempty"`
-
-	// tier 2+3 — step → tool binding (+ that tool's config)
-	Tools map[string]ToolBinding `yaml:"tools"`
-}
-
-// Identity returns the cross-tool environment values merged into every step's
-// inputs (alongside the step's own tool config).
-func (e Env) Identity() map[string]any {
-	return map[string]any{
-		"kube_context": e.KubeContext,
-		"namespace":    e.Namespace,
-		"delivery":     e.ImageDelivery,
+// UnmarshalYAML for Pattern decodes the typed fields, then sweeps the recognized
+// step keys (build/deliver/scan/…) into Steps.
+func (p *Pattern) UnmarshalYAML(node *yaml.Node) error {
+	type rawPattern Pattern // avoid recursion
+	var rp rawPattern
+	if err := node.Decode(&rp); err != nil {
+		return err
 	}
-}
+	*p = Pattern(rp)
 
-// Merged is the resolved app + env, ready for the engine.
-type Merged struct {
-	EnvName string
-	App     App
-	Env     Env
-}
-
-// firstNonEmpty returns the first non-empty string.
-func firstNonEmpty(vs ...string) string {
-	for _, v := range vs {
-		if v != "" {
-			return v
+	// Second pass: collect the step blocks by their known keys.
+	var all map[string]yaml.Node
+	if err := node.Decode(&all); err != nil {
+		return err
+	}
+	steps := map[string]StepBlock{}
+	for k := range stepKeys {
+		n, ok := all[k]
+		if !ok {
+			continue
 		}
+		var sb StepBlock
+		if err := n.Decode(&sb); err != nil {
+			return fmt.Errorf("step %q: %w", k, err)
+		}
+		steps[k] = sb
 	}
-	return ""
+	if len(steps) > 0 {
+		p.Steps = steps
+	}
+	return nil
 }
 
-// ToolsManager resolves env ▸ app (no built-in default; empty → setup errors).
-func (m Merged) ToolsManager() string {
-	return firstNonEmpty(m.Env.Settings.ToolsManager, m.App.Settings.ToolsManager)
-}
-
-// DefaultTag resolves env ▸ app ▸ "dev".
-func (m Merged) DefaultTag() string {
-	return firstNonEmpty(m.Env.Settings.DefaultTag, m.App.Settings.DefaultTag, "dev")
-}
-
-// Registry resolves env ▸ app (empty → no registry prefix, i.e. local load).
-func (m Merged) Registry() string {
-	return firstNonEmpty(m.Env.Settings.Registry, m.App.Settings.Registry)
-}
-
-// Platform resolves env ▸ app (empty → tool default).
-func (m Merged) Platform() string {
-	return firstNonEmpty(m.Env.Settings.Platform, m.App.Settings.Platform)
-}
-
-// Scan resolves env ▸ app (whole-value override; pointer distinguishes unset).
-func (m Merged) Scan() Scan {
-	if m.Env.Settings.Scan != nil {
-		return *m.Env.Settings.Scan
-	}
-	if m.App.Settings.Scan != nil {
-		return *m.App.Settings.Scan
-	}
-	return Scan{}
-}
-
-// Images returns the app images overlaid with the env's per-key overrides (env
-// wins per key; env may also add images), each carrying its map-key Name.
-func (m Merged) Images() map[string]Image {
-	out := map[string]Image{}
-	for k, v := range m.App.Images {
-		out[k] = v
-	}
-	for k, v := range m.Env.Images {
-		out[k] = v // whole-value override per key (no field-level merge)
-	}
-	return out
-}
-
-// SortedImages returns the merged images in deterministic key order, each named.
-func (m Merged) SortedImages() []Image {
-	merged := m.Images()
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]Image, 0, len(keys))
-	for _, k := range keys {
-		img := merged[k]
-		img.Name = k
-		out = append(out, img)
-	}
-	return out
-}
-
-// ImageByName returns the merged image for a name (with Name set).
-func (m Merged) ImageByName(name string) (Image, bool) {
-	img, ok := m.Images()[name]
-	if !ok {
-		return Image{}, false
-	}
-	img.Name = name
-	return img, true
-}
-
-// ReleaseName is the helm release name: explicit release_name, else the app name.
-func (m Merged) ReleaseName() string {
-	if m.Env.ReleaseName != "" {
-		return m.Env.ReleaseName
-	}
-	return m.App.Name
-}
-
-// ImageRef returns the image reference: [registry/]name:tag.
-//
-//   - registry: resolved registry prefix (push delivery), empty for local load.
-//   - tag precedence: the image's OWN tag (explicit, e.g. postgres' 16-pgvector)
-//     ▸ envTag (a resolved env-wide tag like a git sha, applied to images that
-//     don't pin their own) ▸ resolved DefaultTag. envTag is passed in already
-//     resolved (templates like {{ git_short_sha }} are expanded by the engine).
-func (m Merged) ImageRef(img Image, envTag string) string {
-	tag := firstNonEmpty(img.Tag, envTag, m.DefaultTag())
-	ref := img.Name + ":" + tag
-	if reg := m.Registry(); reg != "" {
-		ref = reg + "/" + ref
-	}
-	return ref
-}
+// --- loading -------------------------------------------------------------------
 
 // StackDir is the per-repo context directory.
 const StackDir = ".stack"
 
-// Load reads .stack/app.yaml and .stack/<env>.yaml from repoRoot and merges them.
-func Load(repoRoot, envName string) (Merged, error) {
-	var m Merged
-	m.EnvName = envName
-
-	appPath := filepath.Join(repoRoot, StackDir, "app.yaml")
-	if err := readYAML(appPath, &m.App); err != nil {
-		return m, fmt.Errorf("load app config: %w", err)
-	}
-	envPath := filepath.Join(repoRoot, StackDir, envName+".yaml")
-	if err := readYAML(envPath, &m.Env); err != nil {
-		return m, fmt.Errorf("load env %q: %w", envName, err)
-	}
-	if err := m.validate(); err != nil {
-		return m, err
-	}
-	return m, nil
-}
-
-// LoadApp reads only .stack/app.yaml. The check flow is environment-independent,
-// so `stack check` does not require a selected env.
+// LoadApp reads .stack/app.yaml (the patterns + app-global fields).
 func LoadApp(repoRoot string) (App, error) {
 	var a App
 	if err := readYAML(filepath.Join(repoRoot, StackDir, "app.yaml"), &a); err != nil {
@@ -305,20 +186,218 @@ func LoadApp(repoRoot string) (App, error) {
 	if a.Name == "" {
 		return a, fmt.Errorf("app.yaml: name is required")
 	}
+	if len(a.Patterns) == 0 {
+		return a, fmt.Errorf("app.yaml: at least one pattern is required")
+	}
 	return a, nil
 }
 
-func (m Merged) validate() error {
-	if m.App.Name == "" {
-		return fmt.Errorf("app.yaml: name is required")
+// Load reads app.yaml + .stack/<env>.yaml, selects the env's pattern, and deep-
+// merges the env overrides into that pattern's template. The merged Pattern is
+// returned in Resolved, ready for the engine.
+//
+// The merge happens on GENERIC trees (so the uniform map/scalar/list rule applies
+// untyped), and only the merged result is decoded into a Pattern. The selected
+// pattern's template subtree is taken from app.yaml-as-tree — not by re-encoding
+// the typed Pattern, which would lose the step blocks (they decode out of the
+// struct via the `-` tag).
+func Load(repoRoot, envName string) (Resolved, error) {
+	app, err := LoadApp(repoRoot)
+	if err != nil {
+		return Resolved{}, err
 	}
-	if m.Env.Pattern == "" {
-		return fmt.Errorf("%s.yaml: pattern is required", m.EnvName)
+
+	envPath := filepath.Join(repoRoot, StackDir, envName+".yaml")
+	envTree, err := readTree(envPath)
+	if err != nil {
+		return Resolved{}, fmt.Errorf("load env %q: %w", envName, err)
 	}
-	if len(m.Env.Tools) == 0 {
-		return fmt.Errorf("%s.yaml: tools mapping is required", m.EnvName)
+	patName, _ := envTree["pattern"].(string)
+	if patName == "" {
+		return Resolved{}, fmt.Errorf("%s.yaml: `pattern` is required (the app.yaml pattern to use)", envName)
+	}
+	if _, ok := app.Patterns[patName]; !ok {
+		return Resolved{}, fmt.Errorf("%s.yaml: pattern %q is not defined in app.yaml", envName, patName)
+	}
+
+	// Pull the selected pattern's RAW subtree from app.yaml-as-tree.
+	appTree, err := readTree(filepath.Join(repoRoot, StackDir, "app.yaml"))
+	if err != nil {
+		return Resolved{}, err
+	}
+	patsAny, _ := appTree["patterns"].(map[string]any)
+	tmplTree, _ := asMap(patsAny[patName])
+	if tmplTree == nil {
+		tmplTree = map[string]any{}
+	}
+
+	// `pattern` is the selector, not a pattern field — drop before merging.
+	delete(envTree, "pattern")
+	merged := mergeTree(tmplTree, envTree)
+
+	var pat Pattern
+	if err := decodeTree(merged, &pat); err != nil {
+		return Resolved{}, fmt.Errorf("%s.yaml: resolve pattern %q: %w", envName, patName, err)
+	}
+
+	r := Resolved{App: app.Name, ToolsManager: app.ToolsManager, EnvName: envName, Name: patName, Pattern: pat}
+	if err := r.validate(); err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
+// SelectPattern returns the named pattern (or the sole one if name is empty and
+// there's exactly one). Used by the check flow, which is env-independent.
+func (a App) SelectPattern(name string) (string, Pattern, error) {
+	if name == "" {
+		if len(a.Patterns) == 1 {
+			for n, p := range a.Patterns {
+				return n, p, nil
+			}
+		}
+		names := a.PatternNames()
+		return "", Pattern{}, fmt.Errorf("app has %d patterns (%v); pass --pattern to choose one", len(names), names)
+	}
+	p, ok := a.Patterns[name]
+	if !ok {
+		return "", Pattern{}, fmt.Errorf("pattern %q is not defined in app.yaml (have %v)", name, a.PatternNames())
+	}
+	return name, p, nil
+}
+
+// PatternNames returns the pattern names sorted.
+func (a App) PatternNames() []string {
+	out := make([]string, 0, len(a.Patterns))
+	for n := range a.Patterns {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (r Resolved) validate() error {
+	if r.Pattern.Type == "" {
+		return fmt.Errorf("pattern %q: `type` is required", r.Name)
 	}
 	return nil
+}
+
+// --- accessors the engine uses -------------------------------------------------
+
+// Step returns the resolved step block (tool + config) for an abstract step.
+func (p Pattern) Step(step string) (StepBlock, bool) {
+	s, ok := p.Steps[step]
+	return s, ok
+}
+
+// Scan returns the resolved scan policy (from the scan step block's config).
+func (p Pattern) Scan() Scan {
+	var s Scan
+	sb, ok := p.Steps["scan"]
+	if !ok {
+		return s
+	}
+	if imgs, ok := sb.Config["images"].([]any); ok {
+		for _, v := range imgs {
+			if str, ok := v.(string); ok {
+				s.Images = append(s.Images, str)
+			}
+		}
+	}
+	if f, ok := sb.Config["fail_on"].(string); ok {
+		s.FailOn = f
+	}
+	return s
+}
+
+// Identity returns the cross-tool values merged into every step's template inputs.
+func (p Pattern) Identity() map[string]any {
+	return map[string]any{
+		"kube_context": p.KubeContext,
+		"namespace":    p.Namespace,
+		"delivery":     p.ImageDelivery,
+	}
+}
+
+// ReleaseName is the helm release name: explicit release_name, else the app name.
+func (r Resolved) ReleaseName() string {
+	if r.Pattern.ReleaseName != "" {
+		return r.Pattern.ReleaseName
+	}
+	return r.App
+}
+
+// DefaultTag resolves the pattern's default_tag ▸ "dev".
+func (p Pattern) ResolvedDefaultTag() string {
+	if p.DefaultTag != "" {
+		return p.DefaultTag
+	}
+	return "dev"
+}
+
+// SortedImages returns the pattern's images in deterministic key order, named.
+func (p Pattern) SortedImages() []Image {
+	keys := make([]string, 0, len(p.Images))
+	for k := range p.Images {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]Image, 0, len(keys))
+	for _, k := range keys {
+		img := p.Images[k]
+		img.Name = k
+		out = append(out, img)
+	}
+	return out
+}
+
+// ImageByName returns the pattern image for a name (with Name set).
+func (p Pattern) ImageByName(name string) (Image, bool) {
+	img, ok := p.Images[name]
+	if !ok {
+		return Image{}, false
+	}
+	img.Name = name
+	return img, true
+}
+
+// ImageRef returns [registry/]name:tag. tag precedence: the image's own tag ▸
+// envTag (the resolved pattern Tag) ▸ default_tag. registry prefixes when set.
+func (p Pattern) ImageRef(img Image, envTag string) string {
+	tag := firstNonEmpty(img.Tag, envTag, p.ResolvedDefaultTag())
+	ref := img.Name + ":" + tag
+	if p.Registry != "" {
+		ref = p.Registry + "/" + ref
+	}
+	return ref
+}
+
+// SortedChecks returns the pattern's checks in deterministic key order, named.
+func (p Pattern) SortedChecks() []Check {
+	keys := make([]string, 0, len(p.Checks))
+	for k := range p.Checks {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]Check, 0, len(keys))
+	for _, k := range keys {
+		c := p.Checks[k]
+		c.Name = k
+		out = append(out, c)
+	}
+	return out
+}
+
+// --- helpers -------------------------------------------------------------------
+
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func readYAML(path string, dst any) error {

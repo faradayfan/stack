@@ -10,36 +10,32 @@ import (
 	"github.com/faradayfan/stack/internal/plugins"
 )
 
-// baselineLikeCfg mirrors baseline's .stack context (the M1 fixture) so the
+// baselineLikeCfg mirrors baseline's .stack k8s pattern (the M1 fixture) so the
 // dry-run output can be asserted against the known make-local-up command stream.
-func baselineLikeCfg() config.Merged {
-	return config.Merged{
+func baselineLikeCfg() config.Resolved {
+	return config.Resolved{
+		App:     "baseline",
 		EnvName: "local-k8s",
-		App: config.App{
-			Name: "baseline",
-			Settings: config.Settings{
-				DefaultTag: "dev",
-				Scan:       &config.Scan{Images: []string{"baseline", "baseline-ui"}, FailOn: "high"},
-			},
+		Name:    "k8s",
+		Pattern: config.Pattern{
+			Type:          "k8s",
+			KubeContext:   "docker-desktop",
+			Namespace:     "baseline",
+			ImageDelivery: "load",
+			DefaultTag:    "dev",
 			Images: map[string]config.Image{
 				"baseline":            {Context: "."},
 				"baseline-ui":         {Context: "./frontend"},
 				"baseline-postgresql": {Context: "./deploy/postgres", Tag: "16-pgvector"},
 				"baseline-mem0-api":   {Context: "./deploy/mem0-api", Tag: "ollama", Args: map[string]string{"PATCH_OLLAMA": "1"}},
 			},
-		},
-		Env: config.Env{
-			Pattern:       "k8s",
-			KubeContext:   "docker-desktop",
-			Namespace:     "baseline",
-			ImageDelivery: "load",
-			Tools: map[string]config.ToolBinding{
-				"build-artifact":   {Tool: "docker"},
-				"deliver-artifact": {Tool: "docker", Config: map[string]any{"node": "desktop-control-plane"}},
-				"scan-artifact":    {Tool: "grype"},
-				"wait-ready":       {Tool: "helm"},
-				"teardown":         {Tool: "helm"},
-				"status":           {Tool: "kubectl"},
+			Steps: map[string]config.StepBlock{
+				"build":      {Tool: "docker"},
+				"deliver":    {Tool: "docker", Config: map[string]any{"node": "desktop-control-plane"}},
+				"scan":       {Tool: "grype", Config: map[string]any{"images": []any{"baseline", "baseline-ui"}, "fail_on": "high"}},
+				"wait_ready": {Tool: "helm"},
+				"teardown":   {Tool: "helm"},
+				"status":     {Tool: "kubectl"},
 				"apply": {Tool: "helm", Config: map[string]any{
 					"chart":  "deploy/charts/baseline",
 					"values": []any{"deploy/local/values.yaml"},
@@ -98,38 +94,30 @@ func TestDeployK8s_MatchesMakeLocalUp(t *testing.T) {
 
 // piLikeCfg mirrors a registry-push env (the Pi): push delivery + a platform +
 // an env-wide registry/tag. The build must use buildx with --platform and --push.
-func piLikeCfg() config.Merged {
-	return config.Merged{
+func piLikeCfg() config.Resolved {
+	return config.Resolved{
+		App:     "baseline",
 		EnvName: "pi",
-		App: config.App{
-			Name: "baseline",
-			Settings: config.Settings{
-				DefaultTag: "dev",
-				Scan:       &config.Scan{Images: []string{"baseline"}, FailOn: "high"},
-			},
-			Images: map[string]config.Image{
-				"baseline": {Context: "."},
-			},
-		},
-		Env: config.Env{
-			Pattern:       "k8s",
+		Name:    "k8s",
+		Pattern: config.Pattern{
+			Type:          "k8s",
 			KubeContext:   "k3s",
 			Namespace:     "baseline",
 			ImageDelivery: "push",
-			Settings: config.Settings{
-				Registry: "reg.example:5000",
-				Platform: "linux/arm64",
+			Registry:      "reg.example:5000",
+			Platform:      "linux/arm64",
+			Tag:           "abc123",
+			DefaultTag:    "dev",
+			Images: map[string]config.Image{
+				"baseline": {Context: "."},
 			},
-			Tag: "abc123",
-			Tools: map[string]config.ToolBinding{
-				// platform is NOT in the binding config — it must flow from the
-				// resolved Platform() setting (declared once at the env root).
-				"build-artifact":   {Tool: "docker"},
-				"deliver-artifact": {Tool: "docker"},
-				"scan-artifact":    {Tool: "grype"},
-				"apply": {Tool: "helm", Config: map[string]any{
-					"chart": "deploy/charts/baseline",
-				}},
+			Steps: map[string]config.StepBlock{
+				// platform is NOT in the build block — it flows from the pattern's
+				// Platform field (declared once on the pattern).
+				"build":   {Tool: "docker"},
+				"deliver": {Tool: "docker"},
+				"scan":    {Tool: "grype", Config: map[string]any{"images": []any{"baseline"}, "fail_on": "high"}},
+				"apply":   {Tool: "helm", Config: map[string]any{"chart": "deploy/charts/baseline"}},
 			},
 		},
 	}
@@ -166,7 +154,7 @@ func TestDeployK8s_SetResolvesGitShortSha(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := piLikeCfg()
-	cfg.Env.Tools["apply"] = config.ToolBinding{Tool: "helm", Config: map[string]any{
+	cfg.Pattern.Steps["apply"] = config.StepBlock{Tool: "helm", Config: map[string]any{
 		"chart": "deploy/charts/baseline",
 		"set":   map[string]any{"image.tag": "{{ git_short_sha }}"},
 	}}

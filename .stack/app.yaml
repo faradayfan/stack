@@ -1,5 +1,11 @@
+# stack's own context (schema v2). stack only runs the check/setup flows on
+# itself (no deploy), so the pattern is just a checks holder.
 name: stack
 tools_manager: asdf
-checks:
-  format: { tool: gofmt,   blocking: true }
-  unit:   { tool: go-test, blocking: true, args: { short: true } }
+
+patterns:
+  ci:
+    type: native            # no deploy steps; carries the checks
+    checks:
+      format: { tool: gofmt,   blocking: true }
+      unit:   { tool: go-test, blocking: true, args: { short: true } }

@@ -1,5 +1,13 @@
 # stack — design doc (DRAFT)
 
+> **Schema note:** the app/env context-file schema described below (`images:` and
+> `scan:` in app.yaml; a `tools:` step→tool map + identity in env.yaml) is the v1
+> schema and is **superseded by [SCHEMA-V2.md](SCHEMA-V2.md)** — app.yaml now
+> declares `patterns.<name>` templates and env.yaml selects + deep-merges into
+> one. The command model, plugin model, and engine-as-renderer ideas here are
+> unchanged; only the context-file shape moved. Read SCHEMA-V2.md for the current
+> schema and merge rules.
+
 `stack` — a small CLI that stands up, tears down, and deploys an app into one of
 a few **environment patterns** (local-native, local-k8s, remote-k8s), driven by
 per-app + per-environment **context files**. Think "kubectl contexts, but for

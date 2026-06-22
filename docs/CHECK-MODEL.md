@@ -5,6 +5,12 @@ various scans (image, dependency, SAST, secret, license, …) — without bloati
 the engine. Companion to DESIGN.md (deploy) and PLUGIN-MODEL.md (plugins).
 
 > Status: design for review. Decisions below are settled (see "Decided").
+>
+> **Schema note:** in the current schema ([SCHEMA-V2.md](SCHEMA-V2.md)) `checks:`
+> live **under a pattern** (`patterns.<name>.checks`), not at app.yaml top level.
+> `stack check` auto-selects the pattern when the app has one, else takes
+> `--pattern <name>`. The check *model* below (atomic checks, blocking-ness,
+> parallelism, `after:` deps) is unchanged — only the location moved.
 
 ## The key insight: verification is a different FLOW, not new deploy steps
 

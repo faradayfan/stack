@@ -17,49 +17,62 @@ import (
 	"github.com/faradayfan/stack/internal/plugins"
 )
 
-// Engine carries the resolved config, the plugin registry, and run options.
+// Engine carries the resolved pattern, the plugin registry, and run options.
 type Engine struct {
-	Cfg      config.Merged
+	Cfg      config.Resolved
 	Plugins  *plugins.Registry
 	DryRun   bool
 	Out      io.Writer         // where dry-run lines / progress go (default os.Stdout)
 	versions map[string]string // tool name → detected version (cache)
 }
 
-// New builds an engine for a resolved config.
-func New(cfg config.Merged, reg *plugins.Registry, dryRun bool) *Engine {
+// New builds an engine for a resolved pattern.
+func New(cfg config.Resolved, reg *plugins.Registry, dryRun bool) *Engine {
 	return &Engine{Cfg: cfg, Plugins: reg, DryRun: dryRun, Out: os.Stdout, versions: map[string]string{}}
 }
 
-// NewForChecks builds an engine for the env-independent check flow, needing only
-// the app config (no selected environment).
-func NewForChecks(app config.App, reg *plugins.Registry, dryRun bool) *Engine {
-	return New(config.Merged{App: app}, reg, dryRun)
+// NewForPattern builds an engine for the env-independent check/setup flow, from a
+// pattern selected straight off app.yaml (no env merge).
+func NewForPattern(app config.App, patName string, pat config.Pattern, reg *plugins.Registry, dryRun bool) *Engine {
+	return New(config.Resolved{
+		App:          app.Name,
+		ToolsManager: app.ToolsManager,
+		Name:         patName,
+		Pattern:      pat,
+	}, reg, dryRun)
 }
 
-// Step resolves the abstract step to its bound tool, renders the command with
-// `inputs`, and runs it. The tool is taken from the env's `tools` binding, or a
-// pattern default (defaultTool) when the context omits it — so a minimal context
-// still tears down/observes. A step with neither is an error (mis-wired context).
-// Returns the rendered command (useful for tests / fixtures) even on dry-run.
+// stepKey maps an engine ABSTRACT step (the vocabulary plugins provide via
+// CommandFor) to the pattern's short step-block key (build/deliver/scan/…). The
+// pattern's blocks carry the tool + per-step config for each.
+var stepKey = map[string]string{
+	"build-artifact":   "build",
+	"deliver-artifact": "deliver",
+	"scan-artifact":    "scan",
+	"render-config":    "render",
+	"apply":            "apply",
+	"wait-ready":       "wait_ready",
+	"teardown":         "teardown",
+	"status":           "status",
+	"logs":             "logs",
+}
+
+// Step resolves the abstract step to its bound tool (from the pattern's step
+// block, or a type default when the pattern omits it), renders the command with
+// `inputs`, and runs it. Returns the rendered command (for tests/fixtures) even
+// under dry-run.
 //
-// The template inputs are composed (lowest→highest precedence): env IDENTITY
-// (kube_context, namespace, delivery) < the step's tool CONFIG (from its binding)
-// < the caller-supplied dynamic `inputs` (e.g. per-image `ref`). So tool-specific
-// settings live in the binding's config, shared identity comes from the env root,
-// and the pattern only passes the truly dynamic bits.
+// Template inputs compose (lowest→highest precedence): pattern IDENTITY
+// (kube_context, namespace, delivery) < the step block's CONFIG < the caller's
+// dynamic `inputs` (e.g. per-image `ref`).
 func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
-	binding, ok := e.Cfg.Env.Tools[step]
+	block, ok := e.block(step)
 	if !ok {
-		if t, has := defaultTool(e.Cfg.Env.Pattern, step); has {
-			binding = config.ToolBinding{Tool: t}
-		} else {
-			return "", fmt.Errorf("no tool bound for step %q in env %q (and no pattern default)", step, e.Cfg.EnvName)
-		}
+		return "", fmt.Errorf("no tool bound for step %q in pattern %q (and no type default)", step, e.Cfg.Name)
 	}
-	m, ok := e.Plugins.Get(binding.Tool)
+	m, ok := e.Plugins.Get(block.Tool)
 	if !ok {
-		return "", fmt.Errorf("step %q bound to unknown tool %q", step, binding.Tool)
+		return "", fmt.Errorf("step %q bound to unknown tool %q", step, block.Tool)
 	}
 	version, err := e.detect(m)
 	if err != nil {
@@ -70,11 +83,11 @@ func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("tool %q (v%s) does not provide step %q", binding.Tool, version, step)
+		return "", fmt.Errorf("tool %q (v%s) does not provide step %q", block.Tool, version, step)
 	}
-	cmd, err := render(tmpl, e.stepInputs(binding, inputs))
+	cmd, err := render(tmpl, e.stepInputs(block, inputs))
 	if err != nil {
-		return "", fmt.Errorf("render %q for step %q: %w", binding.Tool, step, err)
+		return "", fmt.Errorf("render %q for step %q: %w", block.Tool, step, err)
 	}
 	if err := e.run(cmd); err != nil {
 		return cmd, err
@@ -82,27 +95,30 @@ func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
 	return cmd, nil
 }
 
-// ValidateBindings checks every tool binding's config against its manifest's
-// declared config schema (required keys present, no unknown keys). Run before a
-// flow so a typo'd config key fails up front with a clear message, not at
-// command-render time.
+// ValidateBindings checks each pattern step block's config against its manifest's
+// declared config schema (no unknown keys). Run before a flow so a typo'd config
+// key fails up front, not at render time.
 func (e *Engine) ValidateBindings() error {
-	for step, b := range e.Cfg.Env.Tools {
-		m, ok := e.Plugins.Get(b.Tool)
+	for abstract := range stepKey {
+		block, ok := e.block(abstract)
 		if !ok {
-			return fmt.Errorf("step %q: unknown tool %q", step, b.Tool)
+			continue
 		}
-		if err := m.ValidateConfig(b.Config); err != nil {
-			return fmt.Errorf("step %q: %w", step, err)
+		m, ok := e.Plugins.Get(block.Tool)
+		if !ok {
+			return fmt.Errorf("step %q: unknown tool %q", abstract, block.Tool)
+		}
+		if err := m.ValidateConfig(block.Config); err != nil {
+			return fmt.Errorf("step %q: %w", abstract, err)
 		}
 	}
 	return nil
 }
 
-// stepInputs composes env identity + the step's tool config + the dynamic inputs.
-func (e *Engine) stepInputs(b config.ToolBinding, dynamic map[string]any) map[string]any {
+// stepInputs composes pattern identity + the step block's config + dynamic inputs.
+func (e *Engine) stepInputs(b config.StepBlock, dynamic map[string]any) map[string]any {
 	out := map[string]any{}
-	for k, v := range e.Cfg.Env.Identity() {
+	for k, v := range e.Cfg.Pattern.Identity() {
 		out[k] = v
 	}
 	for k, v := range b.Config {
@@ -114,16 +130,25 @@ func (e *Engine) stepInputs(b config.ToolBinding, dynamic map[string]any) map[st
 	return out
 }
 
-// binding returns the resolved binding for a step (with pattern default).
-func (e *Engine) binding(step string) (config.ToolBinding, bool) {
-	if b, ok := e.Cfg.Env.Tools[step]; ok {
+// block returns the resolved step block for an abstract step: the pattern's
+// explicit block, else a type default tool (so a minimal pattern still tears
+// down / observes).
+func (e *Engine) block(abstract string) (config.StepBlock, bool) {
+	key, ok := stepKey[abstract]
+	if !ok {
+		return config.StepBlock{}, false
+	}
+	if b, ok := e.Cfg.Pattern.Step(key); ok && b.Tool != "" {
 		return b, true
 	}
-	if t, ok := defaultTool(e.Cfg.Env.Pattern, step); ok {
-		return config.ToolBinding{Tool: t}, true
+	if t, ok := defaultTool(e.Cfg.Pattern.Type, abstract); ok {
+		return config.StepBlock{Tool: t}, true
 	}
-	return config.ToolBinding{}, false
+	return config.StepBlock{}, false
 }
+
+// binding is the old name kept for the pattern_k8s apply-config reader.
+func (e *Engine) binding(step string) (config.StepBlock, bool) { return e.block(step) }
 
 // RunRaw runs (or prints) a literal command not driven by a tool manifest —
 // for engine-level glue like `helm repo add` / `helm dependency build` that
