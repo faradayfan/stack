@@ -27,13 +27,13 @@ func resolveToken(v string) string {
 	}
 }
 
-// envTag returns the env-wide image tag with tokens resolved (e.g. a git sha for
-// the Pi). Empty when the env declares no tag.
+// envTag returns the pattern's image tag with tokens resolved (e.g. a git sha for
+// the Pi). Empty when the pattern declares no tag.
 func (e *Engine) envTag() string {
-	if e.Cfg.Env.Tag == "" {
+	if e.Cfg.Pattern.Tag == "" {
 		return ""
 	}
-	return resolveToken(e.Cfg.Env.Tag)
+	return resolveToken(e.Cfg.Pattern.Tag)
 }
 
 // DeployK8s runs the k8s pattern deploy sequence:
@@ -46,40 +46,40 @@ func (e *Engine) DeployK8s() error {
 	if err := e.ValidateBindings(); err != nil {
 		return err
 	}
-	c := e.Cfg
+	p := e.Cfg.Pattern
 	envTag := e.envTag()
-	images := c.SortedImages() // deterministic order (map → sorted by name)
-	scan := c.Scan()
-	// The apply binding's config carries helm specifics (chart, values, set, repos).
+	images := p.SortedImages() // deterministic order (map → sorted by name)
+	scan := p.Scan()
+	// The apply step block's config carries helm specifics (chart, values, set, repos).
 	apply, _ := e.binding("apply")
 	chart, _ := apply.Config["chart"].(string)
 
-	// 1. build-artifact — per image. Identity + the build tool's config (platform)
+	// 1. build-artifact — per image. Identity + the build block's config (platform)
 	//    are merged by the engine; the pattern passes only per-image dynamics.
 	for _, img := range images {
 		if _, err := e.Step("build-artifact", map[string]any{
-			"ref":      c.ImageRef(img, envTag),
+			"ref":      p.ImageRef(img, envTag),
 			"context":  img.Context,
 			"args":     img.Args,
-			"platform": c.Platform(), // resolved env ▸ app setting (buildx --platform)
+			"platform": p.Platform, // pattern setting (buildx --platform)
 		}); err != nil {
 			return err
 		}
 	}
 
 	// 2. deliver-artifact — load into the node (or push), one per image. `node`/
-	//    `registry` come from the deliver binding's config; `delivery` from env.
+	//    `registry` come from the deliver block's config; `delivery` from identity.
 	for _, img := range images {
 		if _, err := e.Step("deliver-artifact", map[string]any{
-			"ref": c.ImageRef(img, envTag),
+			"ref": p.ImageRef(img, envTag),
 		}); err != nil {
 			return err
 		}
 	}
 
-	// 3. scan-artifact — first-party images only, threshold from .grype.yaml.
+	// 3. scan-artifact — first-party images only, threshold from the scan block.
 	for _, name := range scan.Images {
-		ref, err := imageRefByName(c, name, envTag)
+		ref, err := imageRefByName(p, name, envTag)
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ func (e *Engine) DeployK8s() error {
 		return err
 	}
 	_, err = e.Step("apply", map[string]any{
-		"release": c.ReleaseName(),
+		"release": e.Cfg.ReleaseName(),
 		"set":     set, // resolved (overrides the raw config.set)
 	})
 	return err
@@ -160,7 +160,7 @@ func (e *Engine) renderTool(tool, step string, inputs map[string]any) (string, e
 		return "", fmt.Errorf("tool %q does not provide step %q", tool, step)
 	}
 	merged := map[string]any{}
-	for k, val := range e.Cfg.Env.Identity() {
+	for k, val := range e.Cfg.Pattern.Identity() {
 		merged[k] = val
 	}
 	for k, val := range inputs {
@@ -169,11 +169,11 @@ func (e *Engine) renderTool(tool, step string, inputs map[string]any) (string, e
 	return render(tmpl, merged)
 }
 
-// defaultTool returns the conventional tool for a step in a pattern when the
-// env context omits the binding. Lets a minimal context still tear down/observe
-// without spelling out every step. Explicit bindings always win (see Step).
-func defaultTool(pattern, step string) (string, bool) {
-	if pattern != "k8s" {
+// defaultTool returns the conventional tool for a step of a given pattern TYPE
+// when the pattern omits the step block. Lets a minimal pattern still tear down /
+// observe without spelling out every step. Explicit blocks always win (see Step).
+func defaultTool(patternType, step string) (string, bool) {
+	if patternType != "k8s" {
 		return "", false
 	}
 	switch step {
@@ -189,12 +189,12 @@ func defaultTool(pattern, step string) (string, bool) {
 	return "", false
 }
 
-func imageRefByName(c config.Merged, name, envTag string) (string, error) {
-	img, ok := c.ImageByName(name)
+func imageRefByName(p config.Pattern, name, envTag string) (string, error) {
+	img, ok := p.ImageByName(name)
 	if !ok {
-		return "", fmt.Errorf("scan image %q not found in app.images", name)
+		return "", fmt.Errorf("scan image %q not found in pattern images", name)
 	}
-	return c.ImageRef(img, envTag), nil
+	return p.ImageRef(img, envTag), nil
 }
 
 // resolveSet expands template tokens in the apply binding's `set` config. It

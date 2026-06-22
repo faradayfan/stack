@@ -86,6 +86,7 @@ func rootCmd() *cobra.Command {
 // manager (asdf) or each tool's unmanaged fallback.
 func setupCmd(dryRun *bool) *cobra.Command {
 	var doctor bool
+	var patternFlag string
 	c := &cobra.Command{
 		Use:   "setup",
 		Short: "Install/verify the tools the checks need (via the tools manager)",
@@ -99,11 +100,15 @@ func setupCmd(dryRun *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			patName, pat, err := app.SelectPattern(patternFlag)
+			if err != nil {
+				return err
+			}
 			reg, err := plugins.Load()
 			if err != nil {
 				return err
 			}
-			e := engine.NewForChecks(app, reg, *dryRun)
+			e := engine.NewForPattern(app, patName, pat, reg, *dryRun)
 			results, ok, err := e.Setup(doctor)
 			if err != nil {
 				return err
@@ -119,17 +124,20 @@ func setupCmd(dryRun *bool) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&doctor, "check", false, "diagnose only — report what's missing, install nothing")
+	c.Flags().StringVar(&patternFlag, "pattern", "", "which pattern's checks to set up (required if the app has more than one)")
 	return c
 }
 
 // checkCmd runs the env-independent verification flow (the `stack check` /CI flow).
 func checkCmd(dryRun *bool) *cobra.Command {
-	return &cobra.Command{
+	var patternFlag string
+	c := &cobra.Command{
 		Use:   "check [name...]",
 		Short: "Run the verification checks (tests, lint, format, scans) — the CI flow",
-		Long: "Run the checks declared in .stack/app.yaml. With no args, runs all;\n" +
-			"otherwise only the named checks. Independent checks run in parallel;\n" +
-			"non-blocking checks report but never fail the run.",
+		Long: "Run the checks declared under a pattern in .stack/app.yaml. With no args,\n" +
+			"runs all; otherwise only the named checks. The pattern is auto-selected when\n" +
+			"the app has one; pass --pattern when it has several. Independent checks run\n" +
+			"in parallel; non-blocking checks report but never fail the run.",
 		RunE: func(_ *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
 			repo := config.FindRepoRoot(cwd)
@@ -137,11 +145,15 @@ func checkCmd(dryRun *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			patName, pat, err := app.SelectPattern(patternFlag)
+			if err != nil {
+				return err
+			}
 			reg, err := plugins.Load()
 			if err != nil {
 				return err
 			}
-			e := engine.NewForChecks(app, reg, *dryRun)
+			e := engine.NewForPattern(app, patName, pat, reg, *dryRun)
 			results, passed, err := e.Check(args)
 			if err != nil {
 				return err
@@ -153,6 +165,8 @@ func checkCmd(dryRun *bool) *cobra.Command {
 			return nil
 		},
 	}
+	c.Flags().StringVar(&patternFlag, "pattern", "", "which pattern's checks to run (required if the app has more than one)")
+	return c
 }
 
 func useCmd() *cobra.Command {
@@ -189,16 +203,20 @@ func envCmd(resolveEnv func() (string, string, error)) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			p := cfg.Pattern
 			fmt.Printf("environment : %s\n", cfg.EnvName)
-			fmt.Printf("app         : %s\n", cfg.App.Name)
-			fmt.Printf("pattern     : %s\n", cfg.Env.Pattern)
-			fmt.Printf("kube_context: %s\n", cfg.Env.KubeContext)
-			fmt.Printf("namespace   : %s\n", cfg.Env.Namespace)
-			fmt.Printf("delivery    : %s\n", cfg.Env.ImageDelivery)
+			fmt.Printf("app         : %s\n", cfg.App)
+			fmt.Printf("pattern     : %s (type %s)\n", cfg.Name, p.Type)
+			fmt.Printf("kube_context: %s\n", p.KubeContext)
+			fmt.Printf("namespace   : %s\n", p.Namespace)
+			fmt.Printf("delivery    : %s\n", p.ImageDelivery)
+			if p.Registry != "" {
+				fmt.Printf("registry    : %s\n", p.Registry)
+			}
 			fmt.Println("step → tool :")
-			for _, step := range []string{"build-artifact", "deliver-artifact", "scan-artifact", "render-config", "apply", "wait-ready", "status"} {
-				if t, ok := cfg.Env.Tools[step]; ok {
-					fmt.Printf("  %-16s %s\n", step, t)
+			for _, key := range []string{"build", "deliver", "scan", "render", "apply", "wait_ready", "status"} {
+				if b, ok := p.Step(key); ok && b.Tool != "" {
+					fmt.Printf("  %-12s %s\n", key, b.Tool)
 				}
 			}
 			return nil
@@ -253,9 +271,9 @@ func statusCmd(newEngine func() (*engine.Engine, error)) *cobra.Command {
 	}
 }
 
-// dispatch routes a verb to the pattern implementation. M1 ships `k8s`.
+// dispatch routes a verb to the pattern-TYPE implementation. M1 ships `k8s`.
 func dispatch(e *engine.Engine, verb string, destroy bool) error {
-	switch e.Cfg.Env.Pattern {
+	switch e.Cfg.Pattern.Type {
 	case "k8s":
 		switch verb {
 		case "deploy":
@@ -266,7 +284,7 @@ func dispatch(e *engine.Engine, verb string, destroy bool) error {
 			return e.StatusK8s()
 		}
 	default:
-		return fmt.Errorf("pattern %q not implemented yet (M1 supports: k8s)", e.Cfg.Env.Pattern)
+		return fmt.Errorf("pattern type %q not implemented yet (M1 supports: k8s)", e.Cfg.Pattern.Type)
 	}
 	return fmt.Errorf("unknown verb %q", verb)
 }

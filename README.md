@@ -66,27 +66,43 @@ wait/teardown), `kubectl` (status). Secrets/native/remote-k8s are later mileston
 
 ### Worked example — the exact commands M1 must produce
 
-Given this context (to be authored in the **baseline** repo at
-`.stack/local-k8s.yaml`):
+Given this context (schema v2 — see [docs/SCHEMA-V2.md](docs/SCHEMA-V2.md)).
+**app.yaml** declares the pattern template:
 
 ```yaml
+# .stack/app.yaml
+name: baseline
+tools_manager: asdf
+patterns:
+  k8s:                       # name envs select; `type` is the engine contract
+    type: k8s
+    namespace: baseline
+    image_delivery: load
+    default_tag: dev
+    images:                  # keyed by name
+      baseline:            { context: . }
+      baseline-ui:         { context: ./frontend }
+      baseline-postgresql: { context: ./deploy/postgres, tag: "16-pgvector" }
+      baseline-mem0-api:   { context: ./deploy/mem0-api, tag: "ollama", args: { PATCH_OLLAMA: "1" } }
+    build:   { tool: docker }
+    deliver: { tool: docker, node: desktop-control-plane }
+    scan:    { tool: grype, images: [baseline, baseline-ui], fail_on: high }
+    apply:
+      tool: helm
+      chart: deploy/charts/baseline
+      values: [deploy/local/values.yaml]
+      set: { rollmeTimestamp: "{{ now_unix }}" }
+      repos: [{ name: bitnami, url: https://charts.bitnami.com/bitnami }]
+    wait_ready: { tool: helm }
+    status:     { tool: kubectl }
+```
+
+and **the env file** just selects + overrides the box's specifics:
+
+```yaml
+# .stack/local-k8s.yaml
 pattern: k8s
 kube_context: docker-desktop
-namespace: baseline
-node: desktop-control-plane
-image_delivery: load
-tools: { build-artifact: docker, deliver-artifact: docker, scan-artifact: grype,
-         render-config: helm, apply: helm, wait-ready: helm, status: kubectl }
-chart: deploy/charts/baseline
-values: [deploy/local/values.yaml]
-helm_set: { rollmeTimestamp: "{{ now_unix }}" }
-deps: { helm_repos: [{ name: bitnami, url: https://charts.bitnami.com/bitnami }] }
-images:                                   # keyed by image name (map, not list)
-  baseline:            { context: . }
-  baseline-ui:         { context: ./frontend }
-  baseline-postgresql: { context: ./deploy/postgres, tag: "16-pgvector" }
-  baseline-mem0-api:   { context: ./deploy/mem0-api, tag: "ollama", args: { PATCH_OLLAMA: "1" } }
-scan: { images: [baseline, baseline-ui], fail_on: high }
 ```
 
 `stack deploy --env local-k8s` must run the following (this is the acceptance

@@ -9,28 +9,27 @@ import (
 	"github.com/faradayfan/stack/internal/plugins"
 )
 
-func setupEngine(t *testing.T, app config.App) *engine.Engine {
+// setupEngine builds an engine for the setup flow: tools_manager is app-global,
+// checks are pattern-scoped (NewForPattern reads both off the app + pattern).
+func setupEngine(t *testing.T, toolsManager string, checks map[string]config.Check) *engine.Engine {
 	t.Helper()
 	reg, err := plugins.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return engine.NewForChecks(app, reg, false)
+	app := config.App{Name: "x", ToolsManager: toolsManager}
+	pat := config.Pattern{Type: "k8s", Checks: checks}
+	return engine.NewForPattern(app, "k8s", pat, reg, false)
 }
 
 // TestSetup_ToolsResolveByMethod: the doctor classifies each tool by its setup
 // method (asdf / unmanaged / manual / needs-manager) without installing.
 func TestSetup_DoctorClassifiesMethods(t *testing.T) {
-	app := config.App{
-		Name:     "x",
-		Settings: config.Settings{ToolsManager: "asdf"},
-		Checks: map[string]config.Check{
-			"lint": {Tool: "golangci"}, // asdf (plugin golangci-lint)
-			"sast": {Tool: "gosec"},    // unmanaged (go install)
-			"fmt":  {Tool: "gofmt"},    // asdf (golang)
-		},
-	}
-	e := setupEngine(t, app)
+	e := setupEngine(t, "asdf", map[string]config.Check{
+		"lint": {Tool: "golangci"}, // asdf (plugin golangci-lint)
+		"sast": {Tool: "gosec"},    // unmanaged (go install)
+		"fmt":  {Tool: "gofmt"},    // asdf (golang)
+	})
 	results, _, err := e.Setup(true) // doctor
 	if err != nil {
 		t.Fatal(err)
@@ -53,12 +52,7 @@ func TestSetup_DoctorClassifiesMethods(t *testing.T) {
 // TestSetup_AsdfToolNeedsManager: an asdf-managed tool with NO tools_manager set
 // is reported as needing a manager (not installed, not fatal).
 func TestSetup_AsdfToolNeedsManager(t *testing.T) {
-	app := config.App{
-		Name: "x",
-		// no tools_manager
-		Checks: map[string]config.Check{"lint": {Tool: "golangci"}},
-	}
-	e := setupEngine(t, app)
+	e := setupEngine(t, "", map[string]config.Check{"lint": {Tool: "golangci"}}) // no tools_manager
 	results, ok, err := e.Setup(true)
 	if err != nil {
 		t.Fatal(err)
@@ -73,9 +67,7 @@ func TestSetup_AsdfToolNeedsManager(t *testing.T) {
 
 // TestSetup_UnknownManager errors clearly.
 func TestSetup_UnknownManager(t *testing.T) {
-	app := config.App{Name: "x", Settings: config.Settings{ToolsManager: "nope"},
-		Checks: map[string]config.Check{"lint": {Tool: "golangci"}}}
-	e := setupEngine(t, app)
+	e := setupEngine(t, "nope", map[string]config.Check{"lint": {Tool: "golangci"}})
 	if _, _, err := e.Setup(true); err == nil {
 		t.Error("expected error for unknown tools_manager")
 	}

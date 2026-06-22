@@ -12,17 +12,24 @@ import (
 
 func boolp(b bool) *bool { return &b }
 
-func checkApp() config.App {
-	return config.App{
-		Name: "baseline",
-		Checks: map[string]config.Check{
-			"format": {Tool: "gofmt"},
-			"lint":   {Tool: "golangci"},
-			"unit":   {Tool: "go-test", Args: map[string]any{"short": true}},
-			"sast":   {Tool: "gosec", Blocking: boolp(false)},
-			"scan-image": {Tool: "grype-image", After: "build-artifact",
-				Args: map[string]any{"target": "baseline:dev"}},
-		},
+// checkResolved wraps a checks map into a Resolved (a pattern carrying just
+// those checks) — the check flow reads checks off the resolved pattern.
+func checkResolved(checks map[string]config.Check) config.Resolved {
+	return config.Resolved{
+		App:     "baseline",
+		Name:    "k8s",
+		Pattern: config.Pattern{Type: "k8s", Checks: checks},
+	}
+}
+
+func checkChecks() map[string]config.Check {
+	return map[string]config.Check{
+		"format": {Tool: "gofmt"},
+		"lint":   {Tool: "golangci"},
+		"unit":   {Tool: "go-test", Args: map[string]any{"short": true}},
+		"sast":   {Tool: "gosec", Blocking: boolp(false)},
+		"scan-image": {Tool: "grype-image", After: "build-artifact",
+			Args: map[string]any{"target": "baseline:dev"}},
 	}
 }
 
@@ -32,7 +39,7 @@ func checkEngine(t *testing.T, dry bool) (*engine.Engine, *bytes.Buffer) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := engine.NewForChecks(checkApp(), reg, dry)
+	e := engine.New(checkResolved(checkChecks()), reg, dry)
 	var buf bytes.Buffer
 	e.Out = &buf
 	return e, &buf
@@ -89,11 +96,11 @@ func TestCheck_BlockingSemantics(t *testing.T) {
 	// command by binding to a tool whose check command is exit-1. We use args to
 	// flip gofmt into a guaranteed-fail by scanning a bogus path is overkill —
 	// instead assert overallPassed semantics directly through results.
-	app := config.App{Name: "x", Checks: map[string]config.Check{
+	cfg := checkResolved(map[string]config.Check{
 		"blocker": {Tool: "gofmt"}, // blocking (default)
 		"soft":    {Tool: "gosec", Blocking: boolp(false)},
-	}}
-	e := engine.NewForChecks(app, reg, true) // dry-run → both "pass"
+	})
+	e := engine.New(cfg, reg, true) // dry-run → both "pass"
 	var buf bytes.Buffer
 	e.Out = &buf
 	_, passed, err := e.Check(nil)
@@ -107,12 +114,12 @@ func TestCheck_BlockingSemantics(t *testing.T) {
 // other checks still run. Regression: a missing tool used to abort the whole run.
 func TestCheck_MissingToolDoesNotAbortRun(t *testing.T) {
 	reg, _ := plugins.Load()
-	app := config.App{Name: "x", Checks: map[string]config.Check{
+	cfg := checkResolved(map[string]config.Check{
 		"good":      {Tool: "gofmt"},          // resolvable
 		"missing":   {Tool: "does-not-exist"}, // unknown tool
 		"also-good": {Tool: "go-test", Args: map[string]any{"short": true}},
-	}}
-	e := engine.NewForChecks(app, reg, true) // dry-run: resolvable ones "pass"
+	})
+	e := engine.New(cfg, reg, true) // dry-run: resolvable ones "pass"
 	var buf bytes.Buffer
 	e.Out = &buf
 
