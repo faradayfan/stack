@@ -32,15 +32,15 @@ type Variant struct {
 // Manifest describes a tool (or secret provider): which steps it provides, how to
 // detect its version, and per-version-range command variants.
 type Manifest struct {
-	Tool           string       `yaml:"tool"`     // tool name (or Provider for secret stores)
-	Provider       string       `yaml:"provider"` // set for secret providers instead of tool
-	Detect         string       `yaml:"detect"`   // command whose stdout is the version
-	VersionPattern string       `yaml:"version_pattern,omitempty"`
-	Setup          *Setup       `yaml:"setup,omitempty"` // how `stack setup` installs/verifies it
-	Config         []ConfigKey  `yaml:"config,omitempty"` // accepted per-tool config keys (for validation)
-	Provides       []string     `yaml:"provides"`
-	Variants       []Variant    `yaml:"variants"`
-	Incompatible   string       `yaml:"incompatible,omitempty"`
+	Tool           string      `yaml:"tool"`     // tool name (or Provider for secret stores)
+	Provider       string      `yaml:"provider"` // set for secret providers instead of tool
+	Detect         string      `yaml:"detect"`   // command whose stdout is the version
+	VersionPattern string      `yaml:"version_pattern,omitempty"`
+	Setup          *Setup      `yaml:"setup,omitempty"`  // how `stack setup` installs/verifies it
+	Config         []ConfigKey `yaml:"config,omitempty"` // accepted per-tool config keys (for validation)
+	Provides       []string    `yaml:"provides"`
+	Variants       []Variant   `yaml:"variants"`
+	Incompatible   string      `yaml:"incompatible,omitempty"`
 	// Single-variant tools may declare steps at the top level instead of variants.
 	Steps map[string]Step `yaml:"steps,omitempty"`
 }
