@@ -30,17 +30,21 @@ func baselineLikeCfg() config.Merged {
 			Pattern:       "k8s",
 			KubeContext:   "docker-desktop",
 			Namespace:     "baseline",
-			Node:          "desktop-control-plane",
 			ImageDelivery: "load",
-			Tools: map[string]string{
-				"build-artifact": "docker", "deliver-artifact": "docker",
-				"scan-artifact": "grype", "apply": "helm", "wait-ready": "helm",
-				"teardown": "helm", "status": "kubectl",
+			Tools: map[string]config.ToolBinding{
+				"build-artifact":   {Tool: "docker"},
+				"deliver-artifact": {Tool: "docker", Config: map[string]any{"node": "desktop-control-plane"}},
+				"scan-artifact":    {Tool: "grype"},
+				"wait-ready":       {Tool: "helm"},
+				"teardown":         {Tool: "helm"},
+				"status":           {Tool: "kubectl"},
+				"apply": {Tool: "helm", Config: map[string]any{
+					"chart":  "deploy/charts/baseline",
+					"values": []any{"deploy/local/values.yaml"},
+					"set":    map[string]any{"rollmeTimestamp": "{{ now_unix }}"},
+					"repos":  []any{map[string]any{"name": "bitnami", "url": "https://charts.bitnami.com/bitnami"}},
+				}},
 			},
-			Chart:   "deploy/charts/baseline",
-			Values:  []string{"deploy/local/values.yaml"},
-			HelmSet: map[string]string{"rollmeTimestamp": "{{ now_unix }}"},
-			Deps:    config.Deps{HelmRepos: []config.HelmRepo{{Name: "bitnami", URL: "https://charts.bitnami.com/bitnami"}}},
 		},
 	}
 }

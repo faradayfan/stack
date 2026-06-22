@@ -32,16 +32,47 @@ type Variant struct {
 // Manifest describes a tool (or secret provider): which steps it provides, how to
 // detect its version, and per-version-range command variants.
 type Manifest struct {
-	Tool           string    `yaml:"tool"`     // tool name (or Provider for secret stores)
-	Provider       string    `yaml:"provider"` // set for secret providers instead of tool
-	Detect         string    `yaml:"detect"`   // command whose stdout is the version
-	VersionPattern string    `yaml:"version_pattern,omitempty"`
-	Setup          *Setup    `yaml:"setup,omitempty"` // how `stack setup` installs/verifies it
-	Provides       []string  `yaml:"provides"`
-	Variants       []Variant `yaml:"variants"`
-	Incompatible   string    `yaml:"incompatible,omitempty"`
+	Tool           string       `yaml:"tool"`     // tool name (or Provider for secret stores)
+	Provider       string       `yaml:"provider"` // set for secret providers instead of tool
+	Detect         string       `yaml:"detect"`   // command whose stdout is the version
+	VersionPattern string       `yaml:"version_pattern,omitempty"`
+	Setup          *Setup       `yaml:"setup,omitempty"` // how `stack setup` installs/verifies it
+	Config         []ConfigKey  `yaml:"config,omitempty"` // accepted per-tool config keys (for validation)
+	Provides       []string     `yaml:"provides"`
+	Variants       []Variant    `yaml:"variants"`
+	Incompatible   string       `yaml:"incompatible,omitempty"`
 	// Single-variant tools may declare steps at the top level instead of variants.
 	Steps map[string]Step `yaml:"steps,omitempty"`
+}
+
+// ConfigKey describes one per-tool config key the manifest accepts.
+type ConfigKey struct {
+	Name     string `yaml:"name"`
+	Required bool   `yaml:"required,omitempty"`
+}
+
+// ValidateConfig checks a binding's config against the manifest's declared keys:
+// required keys must be present, and unknown keys are rejected (catches typos).
+// A manifest with no `config:` declaration accepts anything (no validation).
+func (m Manifest) ValidateConfig(cfg map[string]any) error {
+	if len(m.Config) == 0 {
+		return nil
+	}
+	known := map[string]bool{}
+	for _, k := range m.Config {
+		known[k.Name] = true
+		if k.Required {
+			if _, ok := cfg[k.Name]; !ok {
+				return fmt.Errorf("tool %q requires config key %q", m.Name(), k.Name)
+			}
+		}
+	}
+	for k := range cfg {
+		if !known[k] {
+			return fmt.Errorf("tool %q: unknown config key %q", m.Name(), k)
+		}
+	}
+	return nil
 }
 
 // Name returns the tool or provider name.

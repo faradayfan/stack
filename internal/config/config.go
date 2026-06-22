@@ -64,22 +64,63 @@ type App struct {
 	Hooks map[string]string `yaml:"hooks,omitempty"`
 }
 
+// ToolBinding binds an abstract step to a tool plus that tool's per-step config.
+// It accepts two YAML forms (string-or-object):
+//
+//	scan-artifact: grype                       # shorthand, no config
+//	apply: { tool: helm, config: { chart: … } } # full form
+type ToolBinding struct {
+	Tool   string         `yaml:"tool"`
+	Config map[string]any `yaml:"config,omitempty"`
+}
+
+// UnmarshalYAML implements the string-or-object decoding.
+func (b *ToolBinding) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode { // bare string → tool name, no config
+		b.Tool = node.Value
+		return nil
+	}
+	// object form
+	type raw ToolBinding
+	var r raw
+	if err := node.Decode(&r); err != nil {
+		return err
+	}
+	*b = ToolBinding(r)
+	if b.Tool == "" {
+		return fmt.Errorf("tool binding object must set `tool`")
+	}
+	return nil
+}
+
 // Env is .stack/<env>.yaml — one per environment.
+//
+// Three tiers: (1) environment IDENTITY at the root (cross-tool, merged into
+// every step's inputs); (2) tool BINDINGS in `tools` (step → tool); (3) per-tool
+// CONFIG inside each binding. The engine merges identity + a step's tool config
+// into that step's template inputs.
 type Env struct {
-	Pattern       string            `yaml:"pattern"` // k8s | native | compose
-	KubeContext   string            `yaml:"kube_context,omitempty"`
-	Namespace     string            `yaml:"namespace,omitempty"`
-	Node          string            `yaml:"node,omitempty"`           // for `ctr import` (load mode)
-	ImageDelivery string            `yaml:"image_delivery,omitempty"` // load | push
-	Registry      string            `yaml:"registry,omitempty"`
-	Platform      string            `yaml:"platform,omitempty"`
-	Tools         map[string]string `yaml:"tools"` // abstract-step → tool name
-	Chart         string            `yaml:"chart,omitempty"`
-	Values        []string          `yaml:"values,omitempty"`
-	HelmSet       map[string]string `yaml:"helm_set,omitempty"`
-	Deps          Deps              `yaml:"deps,omitempty"`
-	Remote        bool              `yaml:"remote,omitempty"` // → confirm before deploy/down
-	ReleaseName   string            `yaml:"release_name,omitempty"`
+	Pattern string `yaml:"pattern"` // k8s | native | compose
+
+	// tier 1 — environment identity (cross-tool)
+	KubeContext   string `yaml:"kube_context,omitempty"`
+	Namespace     string `yaml:"namespace,omitempty"`
+	ImageDelivery string `yaml:"image_delivery,omitempty"` // load | push
+	Remote        bool   `yaml:"remote,omitempty"`         // → confirm before deploy/down
+	ReleaseName   string `yaml:"release_name,omitempty"`
+
+	// tier 2+3 — step → tool binding (+ that tool's config)
+	Tools map[string]ToolBinding `yaml:"tools"`
+}
+
+// Identity returns the cross-tool environment values merged into every step's
+// inputs (alongside the step's own tool config).
+func (e Env) Identity() map[string]any {
+	return map[string]any{
+		"kube_context": e.KubeContext,
+		"namespace":    e.Namespace,
+		"delivery":     e.ImageDelivery,
+	}
 }
 
 // Merged is the resolved app + env, ready for the engine.

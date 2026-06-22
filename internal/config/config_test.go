@@ -85,6 +85,47 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
+// TestToolBinding_StringOrObject: a tool binding parses from both a bare string
+// (no config) and a {tool, config} object.
+func TestToolBinding_StringOrObject(t *testing.T) {
+	root := writeCtx(t,
+		`name: x`,
+		`pattern: k8s
+kube_context: docker-desktop
+namespace: ns
+image_delivery: load
+tools:
+  scan-artifact: grype
+  apply:
+    tool: helm
+    config:
+      chart: deploy/charts/x
+      values: [a.yaml, b.yaml]`,
+		"e")
+	m, err := Load(root, "e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// string form
+	scan := m.Env.Tools["scan-artifact"]
+	if scan.Tool != "grype" || scan.Config != nil {
+		t.Errorf("string binding: got tool=%q config=%v", scan.Tool, scan.Config)
+	}
+	// object form
+	apply := m.Env.Tools["apply"]
+	if apply.Tool != "helm" {
+		t.Errorf("object binding tool = %q, want helm", apply.Tool)
+	}
+	if apply.Config["chart"] != "deploy/charts/x" {
+		t.Errorf("object binding config.chart = %v", apply.Config["chart"])
+	}
+	// identity is separate from tool config
+	id := m.Env.Identity()
+	if id["kube_context"] != "docker-desktop" || id["namespace"] != "ns" {
+		t.Errorf("identity wrong: %v", id)
+	}
+}
+
 func TestListEnvs(t *testing.T) {
 	root := writeCtx(t, `name: x`, `pattern: k8s
 tools: { apply: helm }`, "local-k8s")

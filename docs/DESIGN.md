@@ -106,44 +106,74 @@ hooks:
 
 ### `.stack/<env>.yaml` — one per environment
 
+**Three tiers** (the reshape): cross-tool **environment identity** at the root,
+**tool-specific config** under each tool binding, and the engine **merges** root
+identity + a step's tool config into that step's template inputs. So tool-specific
+settings live next to the tool (and a kustomize/podman plugin reads its OWN config
+keys — zero schema change), while shared identity (`kube_context`, `namespace`)
+isn't duplicated across every tool that needs it.
+
+A tool binding is **string-or-object**: a bare string when there's no config
+(`status: kubectl`), or `{ tool: …, config: {…} }` when there is.
+
 ```yaml
 # .stack/local-k8s.yaml
 pattern: k8s
+
+# --- tier 1: environment identity (cross-tool; merged into every step's inputs)
 kube_context: docker-desktop
-image_delivery: load          # load → import into node | push → registry
-node: desktop-control-plane   # for `ctr import` (load mode)
 namespace: baseline
-chart: deploy/charts/baseline
-values: [deploy/local/values.yaml]
-helm_set:                     # --set overrides (e.g. the rollme trick)
-  rollmeTimestamp: "{{ now_unix }}"
-deps:                         # helm dependency build prerequisites
-  helm_repos: [{ name: bitnami, url: https://charts.bitnami.com/bitnami }]
-prereqs:                      # soft checks; warn (don't fail) if missing
-  - "ollama list | grep -q qwen2.5:3b"
+image_delivery: load            # load → import into node | push → registry
+remote: false                   # remote → confirm before deploy/down
+
+# --- tier 2: tool bindings + per-tool config (tier 3 = the config blocks)
+tools:
+  build-artifact:
+    tool: docker
+    config: { platform: "" }    # e.g. linux/arm64 on the Pi
+  deliver-artifact:
+    tool: docker
+    config: { node: desktop-control-plane }   # load mode; or registry: … for push
+  scan-artifact: grype          # string form — no config
+  apply:
+    tool: helm
+    config:
+      chart: deploy/charts/baseline
+      values: [deploy/local/values.yaml]
+      set: { rollmeTimestamp: "{{ now_unix }}" }   # --set (the rollme trick)
+      repos: [{ name: bitnami, url: https://charts.bitnami.com/bitnami }]  # repo add + dep build
+  wait-ready: helm
+  status: kubectl
 ```
 
 ```yaml
-# .stack/pi.yaml
+# .stack/pi.yaml — remote: push delivery, arm64, registry
 pattern: k8s
 kube_context: k3s
-image_delivery: push
-registry: "<REGISTRY_HOST>:5000"
-platform: linux/arm64
-tag: "{{ git_short_sha }}"
 namespace: baseline
-chart: deploy/charts/baseline
-values: [deploy/pi/values.yaml, deploy/pi/secrets.yaml?]   # ? = optional-if-present
-remote: true                  # → confirm before deploy/down
+image_delivery: push
+remote: true                    # → confirm before deploy/down
+tools:
+  build-artifact:  { tool: docker, config: { platform: linux/arm64 } }
+  deliver-artifact: { tool: docker, config: { registry: "<REGISTRY_HOST>:5000", tag: "{{ git_short_sha }}" } }
+  apply:
+    tool: helm
+    config:
+      chart: deploy/charts/baseline
+      values: [deploy/pi/values.yaml, deploy/pi/secrets.yaml?]   # ? = optional-if-present
 ```
 
 ```yaml
-# .stack/native.yaml
+# .stack/native.yaml  (later milestone)
 pattern: native
-compose: deploy/local/docker-compose.yaml   # infra (if any)
-run:                          # processes `up` starts (or just builds)
-  - "go run ./cmd/baseline"
+tools:
+  apply: { tool: compose, config: { file: deploy/local/docker-compose.yaml } }
 ```
+
+**Tool-config validation:** each tool manifest declares the config keys it accepts
+(and which are required), so stack validates `helm needs chart` up front and
+catches typos with a clear error rather than failing at command-render time.
+See PLUGIN-MODEL.md.
 
 Template tokens (`{{ now_unix }}`, `{{ git_short_sha }}`) cover the few dynamic
 values the Makefiles compute inline.
