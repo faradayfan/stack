@@ -36,7 +36,10 @@ func (e *Engine) Check(only []string) ([]CheckResult, bool, error) {
 		return nil, true, fmt.Errorf("no checks to run (declare `checks:` in .stack/app.yaml)")
 	}
 
-	// Resolve each check to a command up front (fail fast on a mis-wired tool).
+	// Resolve each check to a command. A resolve failure (unknown tool, tool
+	// binary not on PATH for version detection, render error) is recorded as a
+	// FAILED result for THAT check — it must not abort the other checks. A
+	// blocking check that can't resolve fails the run; a non-blocking one warns.
 	type job struct {
 		c   config.Check
 		cmd string
@@ -50,7 +53,11 @@ func (e *Engine) Check(only []string) ([]CheckResult, bool, error) {
 		}
 		cmd, err := e.renderCheck(c)
 		if err != nil {
-			return nil, false, fmt.Errorf("check %q: %w", c.Name, err)
+			results = append(results, CheckResult{
+				Name: c.Name, Blocking: c.IsBlocking(), Passed: false, Err: err,
+			})
+			_, _ = fmt.Fprintf(e.Out, "[%s] cannot run: %v\n", c.Name, err)
+			continue
 		}
 		jobs = append(jobs, job{c: c, cmd: cmd})
 	}
@@ -122,7 +129,7 @@ func (e *Engine) renderCheck(c config.Check) (string, error) {
 	if !m.ProvidesStep("check") {
 		return "", fmt.Errorf("tool %q does not provide the `check` step", c.Tool)
 	}
-	v, err := e.detect(m)
+	v, err := e.detectIn(m, c.Dir) // honor the check's working dir for version detection
 	if err != nil {
 		return "", err
 	}

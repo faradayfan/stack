@@ -80,29 +80,39 @@ func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
 // belongs to a step's preamble. Kept explicit so the dry-run output is complete.
 func (e *Engine) RunRaw(cmd string) error { return e.run(cmd) }
 
-// detect runs the tool's `detect` command (once, cached) to read its version.
-// Under dry-run, detection still runs if the tool is present; if absent, it
-// returns a sentinel so command selection can proceed for printing.
-func (e *Engine) detect(m plugins.Manifest) (string, error) {
-	if v, ok := e.versions[m.Name()]; ok {
+// detect runs the tool's `detect` command at the repo root.
+func (e *Engine) detect(m plugins.Manifest) (string, error) { return e.detectIn(m, "") }
+
+// detectIn runs the tool's `detect` command from `dir` (once per tool+dir,
+// cached) to read its version. A tool's version may depend on the working
+// directory (e.g. an asdf-pinned node/pnpm only resolves inside the subdir that
+// pins it), so detection must honor a check's `dir`. Under dry-run, an absent
+// tool yields a sentinel so command selection can still render for printing.
+func (e *Engine) detectIn(m plugins.Manifest, dir string) (string, error) {
+	key := m.Name() + "\x00" + dir
+	if v, ok := e.versions[key]; ok {
 		return v, nil
 	}
 	if m.Detect == "" {
-		e.versions[m.Name()] = "0.0.0"
+		e.versions[key] = "0.0.0"
 		return "0.0.0", nil
 	}
-	out, err := exec.Command("sh", "-c", m.Detect).Output()
+	cmd := exec.Command("sh", "-c", m.Detect)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		if e.DryRun {
 			// Tool may not be installed on the box authoring a dry-run; assume a
 			// modern version so the highest variant renders for inspection.
-			e.versions[m.Name()] = "9999.0.0"
+			e.versions[key] = "9999.0.0"
 			return "9999.0.0", nil
 		}
 		return "", fmt.Errorf("detect %s version (%q): %w", m.Name(), m.Detect, err)
 	}
 	v := strings.TrimSpace(string(out))
-	e.versions[m.Name()] = v
+	e.versions[key] = v
 	return v, nil
 }
 
