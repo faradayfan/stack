@@ -54,7 +54,7 @@ func TestCheck_DryRunRendersEachTool(t *testing.T) {
 		"format": `test -z "$(gofmt -l .)"`,
 		"lint":   "golangci-lint run",
 		"unit":   "go test -short ./...",
-		"sast":   "gosec -severity high -confidence high ./...",
+		"sast":   "gosec -quiet -severity high -confidence high ./...",
 	}
 	for name, frag := range wants {
 		if !strings.Contains(out, frag) {
