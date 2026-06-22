@@ -1,0 +1,8 @@
+tool: grype
+detect: "grype version -o text"
+provides: [scan-artifact]
+# grype reads .grype.yaml (fail-on-severity + ignore list) from the repo, so the
+# command stays minimal — the gate threshold lives in config, consistent with CI.
+steps:
+  scan-artifact:
+    command: "grype {{.target}}"
