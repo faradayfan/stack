@@ -11,9 +11,11 @@ func (e *Engine) envTag() string {
 	return resolveToken(e.Cfg.Pattern.Tag)
 }
 
-// Down tears down via the pattern's `teardown` step block (e.g. helm uninstall).
-// With destroy, it also runs kubectl's teardown variant to drop volumes — the one
-// remaining tool-specific bit, rendered explicitly so dry-run is complete.
+// Down runs the pattern's `teardown` step block (e.g. helm uninstall). With
+// destroy, it also runs the pattern's `destroy` step block (e.g. kubectl drop
+// PVCs) — both via the generic Step path, so the engine names no tool. A
+// `--destroy` with no `destroy:` block declared is an error (the pattern didn't
+// wire volume cleanup), not a silent no-op.
 func (e *Engine) Down(destroy bool) error {
 	if _, err := e.Step("teardown", map[string]any{
 		"release": e.Cfg.ReleaseName(),
@@ -21,11 +23,14 @@ func (e *Engine) Down(destroy bool) error {
 		return err
 	}
 	if destroy {
-		cmd, err := e.renderTool("kubectl", "teardown", nil)
-		if err != nil {
+		if _, ok := e.block("destroy"); !ok {
+			return fmt.Errorf("--destroy: pattern %q declares no `destroy` step (volume cleanup)", e.Cfg.Name)
+		}
+		if _, err := e.Step("destroy", map[string]any{
+			"release": e.Cfg.ReleaseName(),
+		}); err != nil {
 			return err
 		}
-		return e.RunRaw(cmd)
 	}
 	return nil
 }
@@ -34,29 +39,4 @@ func (e *Engine) Down(destroy bool) error {
 func (e *Engine) Status() error {
 	_, err := e.Step("status", nil)
 	return err
-}
-
-// renderTool renders a specific tool's step command without it being the bound
-// tool for that step (used by down --destroy → kubectl). Identity is merged in.
-func (e *Engine) renderTool(tool, step string, inputs map[string]any) (string, error) {
-	m, ok := e.Plugins.Get(tool)
-	if !ok {
-		return "", fmt.Errorf("unknown tool %q", tool)
-	}
-	v, err := e.detect(m)
-	if err != nil {
-		return "", err
-	}
-	tmpl, ok, err := m.CommandFor(step, v)
-	if err != nil || !ok {
-		return "", fmt.Errorf("tool %q does not provide step %q", tool, step)
-	}
-	merged := map[string]any{}
-	for k, val := range e.Cfg.Pattern.Identity() {
-		merged[k] = val
-	}
-	for k, val := range inputs {
-		merged[k] = val
-	}
-	return render(tmpl, merged)
 }

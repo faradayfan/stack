@@ -35,6 +35,7 @@ func baselineLikeCfg() config.Resolved {
 				"scan":       {Tool: "grype", Config: map[string]any{"images": []any{"baseline", "baseline-ui"}, "fail_on": "high"}},
 				"wait_ready": {Tool: "helm"},
 				"teardown":   {Tool: "helm"},
+				"destroy":    {Tool: "kubectl"}, // drop PVCs on --destroy
 				"status":     {Tool: "kubectl"},
 				"apply": {Tool: "helm", Config: map[string]any{
 					"chart":  "deploy/charts/baseline",
@@ -184,8 +185,29 @@ func TestDownK8s(t *testing.T) {
 
 func TestDownK8s_Destroy(t *testing.T) {
 	got := dryRun(t, func(e *engine.Engine) error { return e.Down(true) })
+	// --destroy runs the `destroy` step block (kubectl) after teardown (helm).
+	if !strings.Contains(got, "helm --kube-context docker-desktop -n baseline uninstall baseline") {
+		t.Errorf("down --destroy must still uninstall first, got:\n%s", got)
+	}
 	if !strings.Contains(got, "kubectl --context docker-desktop -n baseline delete pvc --all") {
 		t.Errorf("down --destroy must drop PVCs, got:\n%s", got)
+	}
+}
+
+// TestDown_DestroyWithoutBlockErrors: --destroy with no `destroy:` step block is
+// a clear error (the pattern didn't declare volume cleanup), not a silent no-op.
+func TestDown_DestroyWithoutBlockErrors(t *testing.T) {
+	reg, err := plugins.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := baselineLikeCfg()
+	delete(cfg.Pattern.Steps, "destroy") // pattern has no destroy block
+	e := engine.New(cfg, reg, true)
+	var buf bytes.Buffer
+	e.Out = &buf
+	if err := e.Down(true); err == nil {
+		t.Error("expected an error: --destroy but no destroy step block")
 	}
 }
 
