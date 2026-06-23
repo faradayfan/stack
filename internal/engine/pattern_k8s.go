@@ -36,48 +36,50 @@ func (e *Engine) envTag() string {
 	return resolveToken(e.Cfg.Pattern.Tag)
 }
 
-// DeployK8s runs the k8s pattern deploy sequence:
-//
-//	build-artifact (each image) → deliver-artifact (each) → scan-artifact (each
-//	scan image) → [helm repo add + dependency build] → apply
-//
-// It produces exactly the command stream the M1 worked example specifies.
+// DeployK8s runs the full k8s deploy: the pattern's pipeline (or the default
+// build→deliver→scan→apply when none is declared). Equivalent to the M1 worked
+// example's command stream.
 func (e *Engine) DeployK8s() error {
-	if err := e.ValidateBindings(); err != nil {
-		return err
-	}
+	return e.RunPipeline("deploy")
+}
+
+// k8sBuild builds each artifact's image. Identity + the build block's config
+// (platform) are merged by the engine; the pattern passes per-image dynamics.
+func (e *Engine) k8sBuild() error {
 	p := e.Cfg.Pattern
 	envTag := e.envTag()
-	images := p.SortedImages() // deterministic order (map → sorted by name)
-	scan := p.Scan()
-	// The apply step block's config carries helm specifics (chart, values, set, repos).
-	apply, _ := e.binding("apply")
-	chart, _ := apply.Config["chart"].(string)
-
-	// 1. build-artifact — per image. Identity + the build block's config (platform)
-	//    are merged by the engine; the pattern passes only per-image dynamics.
-	for _, img := range images {
+	for _, img := range p.SortedArtifacts() {
 		if _, err := e.Step("build-artifact", map[string]any{
 			"ref":      p.ImageRef(img, envTag),
 			"context":  img.Context,
 			"args":     img.Args,
-			"platform": p.Platform, // pattern setting (buildx --platform)
+			"platform": p.Platform,
 		}); err != nil {
 			return err
 		}
 	}
+	return nil
+}
 
-	// 2. deliver-artifact — load into the node (or push), one per image. `node`/
-	//    `registry` come from the deliver block's config; `delivery` from identity.
-	for _, img := range images {
+// k8sDeliver loads each image into the node (or pushes), one per artifact.
+func (e *Engine) k8sDeliver() error {
+	p := e.Cfg.Pattern
+	envTag := e.envTag()
+	for _, img := range p.SortedArtifacts() {
 		if _, err := e.Step("deliver-artifact", map[string]any{
 			"ref": p.ImageRef(img, envTag),
 		}); err != nil {
 			return err
 		}
 	}
+	return nil
+}
 
-	// 3. scan-artifact — first-party images only, threshold from the scan block.
+// k8sScan vuln-gates the first-party images named in the scan block.
+func (e *Engine) k8sScan() error {
+	p := e.Cfg.Pattern
+	envTag := e.envTag()
+	scan := p.Scan()
 	for _, name := range scan.Images {
 		ref, err := imageRefByName(p, name, envTag)
 		if err != nil {
@@ -90,9 +92,15 @@ func (e *Engine) DeployK8s() error {
 			return err
 		}
 	}
+	return nil
+}
 
-	// 4. chart deps (helm repo add + dependency build) — from the apply binding's
-	//    `repos` config; engine-level preamble.
+// k8sApply runs the chart-deps preamble (helm repo add + dependency build) then
+// helm upgrade --install. chart/values/set/repos come from the apply step block.
+func (e *Engine) k8sApply() error {
+	apply, _ := e.binding("apply")
+	chart, _ := apply.Config["chart"].(string)
+
 	repos := toRepos(apply.Config["repos"])
 	for _, r := range repos {
 		if err := e.RunRaw(fmt.Sprintf("helm repo add %s %s", r.Name, r.URL)); err != nil {
@@ -105,16 +113,20 @@ func (e *Engine) DeployK8s() error {
 		}
 	}
 
-	// 5. apply (helm upgrade --install). chart/values/set come from the binding
-	//    config (merged by the engine); `set` tokens resolved here; release added.
 	set, err := resolveSet(apply.Config["set"])
 	if err != nil {
 		return err
 	}
 	_, err = e.Step("apply", map[string]any{
 		"release": e.Cfg.ReleaseName(),
-		"set":     set, // resolved (overrides the raw config.set)
+		"set":     set,
 	})
+	return err
+}
+
+// k8sWait blocks until the release is healthy (helm --wait status).
+func (e *Engine) k8sWait() error {
+	_, err := e.Step("wait-ready", map[string]any{"release": e.Cfg.ReleaseName()})
 	return err
 }
 
@@ -190,9 +202,9 @@ func defaultTool(patternType, step string) (string, bool) {
 }
 
 func imageRefByName(p config.Pattern, name, envTag string) (string, error) {
-	img, ok := p.ImageByName(name)
+	img, ok := p.ArtifactByName(name)
 	if !ok {
-		return "", fmt.Errorf("scan image %q not found in pattern images", name)
+		return "", fmt.Errorf("scan image %q not found in pattern artifacts", name)
 	}
 	return p.ImageRef(img, envTag), nil
 }

@@ -23,7 +23,7 @@ func baselineLikeCfg() config.Resolved {
 			Namespace:     "baseline",
 			ImageDelivery: "load",
 			DefaultTag:    "dev",
-			Images: map[string]config.Image{
+			Artifacts: map[string]config.Artifact{
 				"baseline":            {Context: "."},
 				"baseline-ui":         {Context: "./frontend"},
 				"baseline-postgresql": {Context: "./deploy/postgres", Tag: "16-pgvector"},
@@ -108,7 +108,7 @@ func piLikeCfg() config.Resolved {
 			Platform:      "linux/arm64",
 			Tag:           "abc123",
 			DefaultTag:    "dev",
-			Images: map[string]config.Image{
+			Artifacts: map[string]config.Artifact{
 				"baseline": {Context: "."},
 			},
 			Steps: map[string]config.StepBlock{

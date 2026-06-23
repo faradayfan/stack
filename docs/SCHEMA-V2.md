@@ -195,6 +195,67 @@ apply:
 The scan duplication is gone: `scan` is one block (tool + images + threshold). The
 env files are small and read as "k8s, but here's what's different."
 
+## Artifacts (tool-agnostic build targets)
+
+A pattern's build targets live in `artifacts:` (keyed by name), NOT `images:` —
+the collection is tool-agnostic so it spans pattern types. Each artifact's fields
+are read by its build TOOL's manifest:
+
+- **docker** (k8s pattern): `context`, `tag`, `args` → an image ref.
+- **go** (native pattern): `package`, `output`, `ldflags` → a binary
+  (`go build -o {{.output}} {{.package}}`).
+
+```yaml
+# k8s pattern
+artifacts:
+  baseline: { context: ., tag: dev }
+
+# native pattern (stack builds itself)
+artifacts:
+  stack: { package: ./cmd/stack, output: bin/stack }
+build: { tool: go }
+```
+
+`stack build` runs ONLY the build-artifact step for the selected pattern: a k8s
+pattern builds every image; a native pattern builds every binary. No
+deliver/scan/apply. (Native currently supports build only; run/install are future
+verbs.) stack's own `.stack/app.yaml` uses a native `local` pattern with the `go`
+plugin to compile itself — the tool dogfooding the tool.
+
+## Pipeline (stage order is data)
+
+A pattern declares `pipeline: [...]` — the ordered list of fine-grained **stages**
+it runs (`check`, `build`, `scan`, `deliver`, `apply`, `wait`). A forward **verb**
+runs the pipeline **up to and including its terminal stage**, so list order IS
+gating order — put `check` first and everything after it is gated by it.
+
+```yaml
+patterns:
+  local:
+    type: native
+    pipeline: [check, build]   # `stack build` runs check, then build
+    checks:    { format: { tool: gofmt }, unit: { tool: go-test } }
+    artifacts: { stack: { package: ./cmd/stack, output: bin/stack } }
+    build:     { tool: go }
+```
+
+Verb → terminal stage:
+
+| verb | runs the pipeline up to & including |
+| --- | --- |
+| `check` | `check` |
+| `build` | `build` |
+| `deploy` | the last stage (the whole forward pipeline) |
+
+So with `pipeline: [check, build, scan, deliver, apply]`:
+`stack check` → check · `stack build` → check, build · `stack deploy` → all five.
+A failing stage stops the run (a failed `check` never reaches `build`).
+
+`down` and `status` are reverse/observe verbs — outside the forward pipeline, with
+their own standalone behavior. A pattern with **no** `pipeline:` falls back to the
+engine default for its type (k8s → `[build, deliver, scan, apply]`, native →
+`[build]`), so existing configs keep working unchanged.
+
 ## Engine internals (build notes)
 
 - `type` replaces today's `pattern` field as the step-sequence selector. The

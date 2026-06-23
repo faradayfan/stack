@@ -1,11 +1,25 @@
-# stack's own context (schema v2). stack only runs the check/setup flows on
-# itself (no deploy), so the pattern is just a checks holder.
+# stack's own context (schema v2). stack dogfoods itself: it runs its own check/
+# setup flows AND builds its own binary via the `go` build plugin.
 name: stack
 tools_manager: asdf
 
 patterns:
+  # The CI/verification pattern — carries the checks (no build/deploy).
   ci:
-    type: native            # no deploy steps; carries the checks
+    type: native
     checks:
-      format: { tool: gofmt,   blocking: true }
-      unit:   { tool: go-test, blocking: true, args: { short: true } }
+      format: { tool: gofmt, blocking: true }
+      unit: { tool: go-test, blocking: true, args: { short: true } }
+
+  # The local build pattern — `stack build` runs checks first, then compiles the
+  # binary. The `pipeline` lists the stages in order; `stack build` runs up to &
+  # including `build`, so `check` first means the build is gated by the checks.
+  local:
+    type: native
+    pipeline: [check, build]
+    checks:
+      format: { tool: gofmt, blocking: true }
+      unit: { tool: go-test, blocking: true, args: { short: true } }
+    artifacts:
+      stack: { package: ./cmd/stack, output: bin/stack }
+    build: { tool: go }

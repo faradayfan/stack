@@ -20,13 +20,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Image is one buildable artifact. Its name is the MAP KEY in `images`, so its
-// Name is filled from the key, not parsed.
-type Image struct {
-	Name    string            `yaml:"-"`
-	Context string            `yaml:"context"`
-	Tag     string            `yaml:"tag,omitempty"`  // explicit tag wins over the env/default tag
-	Args    map[string]string `yaml:"args,omitempty"` // --build-arg
+// Artifact is one buildable thing in a pattern's `artifacts:` map. Its fields are
+// read by its build TOOL's manifest, so they're a superset across tool types:
+//
+//   - docker (k8s pattern): context, tag, args → an image ref
+//   - go (native pattern):  package, output    → a binary
+//
+// Its Name is the map key (filled from the key, not parsed).
+type Artifact struct {
+	Name string `yaml:"-"`
+
+	// image fields (docker / k8s)
+	Context string            `yaml:"context,omitempty"`
+	Tag     string            `yaml:"tag,omitempty"` // explicit tag wins over the env/default tag
+	Args    map[string]string `yaml:"args,omitempty"`
+
+	// binary fields (go / native)
+	Package string `yaml:"package,omitempty"` // the Go package to build (e.g. ./cmd/stack)
+	Output  string `yaml:"output,omitempty"`  // output path (e.g. bin/stack)
+	Ldflags string `yaml:"ldflags,omitempty"`
 }
 
 // Scan is the scan step's policy: which first-party images to vuln-gate and the
@@ -84,8 +96,15 @@ type Pattern struct {
 	ReleaseName   string `yaml:"release_name,omitempty"`
 	DefaultTag    string `yaml:"default_tag,omitempty"`
 
-	Images map[string]Image     `yaml:"images,omitempty"`
-	Steps  map[string]StepBlock `yaml:"-"` // build/deliver/scan/apply/wait_ready/status/render
+	// Pipeline is the ordered list of fine-grained stages the pattern runs
+	// (check, build, scan, deliver, apply, wait). A forward verb runs the
+	// pipeline up to and including its terminal stage (check→check, build→build,
+	// deploy→the last stage), so list order IS gating order — put `check` first
+	// and everything after is gated by it. Empty → the engine's default sequence.
+	Pipeline []string `yaml:"pipeline,omitempty"`
+
+	Artifacts map[string]Artifact  `yaml:"artifacts,omitempty"`
+	Steps     map[string]StepBlock `yaml:"-"` // build/deliver/scan/apply/wait_ready/status/render
 
 	Checks map[string]Check  `yaml:"checks,omitempty"`
 	Hooks  map[string]string `yaml:"hooks,omitempty"`
@@ -336,37 +355,38 @@ func (p Pattern) ResolvedDefaultTag() string {
 	return "dev"
 }
 
-// SortedImages returns the pattern's images in deterministic key order, named.
-func (p Pattern) SortedImages() []Image {
-	keys := make([]string, 0, len(p.Images))
-	for k := range p.Images {
+// SortedArtifacts returns the pattern's artifacts in deterministic key order, named.
+func (p Pattern) SortedArtifacts() []Artifact {
+	keys := make([]string, 0, len(p.Artifacts))
+	for k := range p.Artifacts {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	out := make([]Image, 0, len(keys))
+	out := make([]Artifact, 0, len(keys))
 	for _, k := range keys {
-		img := p.Images[k]
-		img.Name = k
-		out = append(out, img)
+		a := p.Artifacts[k]
+		a.Name = k
+		out = append(out, a)
 	}
 	return out
 }
 
-// ImageByName returns the pattern image for a name (with Name set).
-func (p Pattern) ImageByName(name string) (Image, bool) {
-	img, ok := p.Images[name]
+// ArtifactByName returns the pattern artifact for a name (with Name set).
+func (p Pattern) ArtifactByName(name string) (Artifact, bool) {
+	a, ok := p.Artifacts[name]
 	if !ok {
-		return Image{}, false
+		return Artifact{}, false
 	}
-	img.Name = name
-	return img, true
+	a.Name = name
+	return a, true
 }
 
-// ImageRef returns [registry/]name:tag. tag precedence: the image's own tag ▸
-// envTag (the resolved pattern Tag) ▸ default_tag. registry prefixes when set.
-func (p Pattern) ImageRef(img Image, envTag string) string {
-	tag := firstNonEmpty(img.Tag, envTag, p.ResolvedDefaultTag())
-	ref := img.Name + ":" + tag
+// ImageRef returns [registry/]name:tag for an image artifact. tag precedence: the
+// artifact's own tag ▸ envTag (the resolved pattern Tag) ▸ default_tag. registry
+// prefixes when set.
+func (p Pattern) ImageRef(a Artifact, envTag string) string {
+	tag := firstNonEmpty(a.Tag, envTag, p.ResolvedDefaultTag())
+	ref := a.Name + ":" + tag
 	if p.Registry != "" {
 		ref = p.Registry + "/" + ref
 	}

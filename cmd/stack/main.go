@@ -73,6 +73,7 @@ func rootCmd() *cobra.Command {
 	root.AddCommand(
 		useCmd(),
 		envCmd(resolveEnv),
+		buildCmd(newEngine),
 		deployCmd(newEngine),
 		downCmd(newEngine),
 		statusCmd(newEngine),
@@ -224,6 +225,23 @@ func envCmd(resolveEnv func() (string, string, error)) *cobra.Command {
 	}
 }
 
+// buildCmd runs only the build-artifact step for the selected pattern: for a k8s
+// pattern it builds every image; for a native pattern it builds every binary
+// (e.g. `go build -o bin/stack ./cmd/stack`). No deliver/scan/apply.
+func buildCmd(newEngine func() (*engine.Engine, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "build",
+		Short: "Build the app's artifacts (images or binaries) — no deliver/apply",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			e, err := newEngine()
+			if err != nil {
+				return err
+			}
+			return dispatch(e, "build", false)
+		},
+	}
+}
+
 func deployCmd(newEngine func() (*engine.Engine, error)) *cobra.Command {
 	c := &cobra.Command{
 		Use:     "deploy",
@@ -271,20 +289,25 @@ func statusCmd(newEngine func() (*engine.Engine, error)) *cobra.Command {
 	}
 }
 
-// dispatch routes a verb to the pattern-TYPE implementation. M1 ships `k8s`.
+// dispatch routes a verb to the pattern-TYPE implementation.
 func dispatch(e *engine.Engine, verb string, destroy bool) error {
+	switch verb {
+	case "build", "deploy":
+		// Forward verbs run the pattern's pipeline up to their terminal stage
+		// (so a `check`-first pipeline gates the build/deploy).
+		return e.RunPipeline(verb)
+	}
+	// down/status are reverse/observe verbs — outside the forward pipeline.
 	switch e.Cfg.Pattern.Type {
 	case "k8s":
 		switch verb {
-		case "deploy":
-			return e.DeployK8s()
 		case "down":
 			return e.DownK8s(destroy)
 		case "status":
 			return e.StatusK8s()
 		}
+		return fmt.Errorf("unknown verb %q", verb)
 	default:
-		return fmt.Errorf("pattern type %q not implemented yet (M1 supports: k8s)", e.Cfg.Pattern.Type)
+		return fmt.Errorf("verb %q not supported for pattern type %q", verb, e.Cfg.Pattern.Type)
 	}
-	return fmt.Errorf("unknown verb %q", verb)
 }
