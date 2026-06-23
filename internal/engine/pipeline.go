@@ -111,11 +111,10 @@ func (e *Engine) runStage(stage string) error {
 
 	switch def.loop {
 	case loopOnce:
-		// apply resolves its `set` tokens before rendering (and the helm manifest's
-		// `pre:` adds the repo/dep preamble); other once-stages just pass release.
-		if stage == "apply" {
-			return e.k8sApply()
-		}
+		// once-stages (apply, wait) pass only the release; the step block's config
+		// (chart/values/set/repos for apply) flows through stepInputs, where its
+		// tokens are resolved and the helm manifest's `pre:` adds the preamble. No
+		// per-stage special case.
 		_, err := e.Step(def.abstract, map[string]any{"release": e.Cfg.ReleaseName()})
 		return err
 	case loopPerArtifact:

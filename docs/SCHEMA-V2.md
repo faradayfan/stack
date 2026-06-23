@@ -301,6 +301,28 @@ stages pass the whole artifact's fields (ref/context/args/platform AND
 package/output/ldflags) as inputs; each manifest template uses only what it needs
 (`missingkey=zero`), so `docker` and `go` share one code path with no type switch.
 
+## Template tokens (resolved in any config value)
+
+Two runtime tokens are resolved in **every** step block's config — `{{ now_unix }}`
+and `{{ git_short_sha }}` — at the single `stepInputs` choke point, before the
+command template renders. They work anywhere a string appears (whole-value or
+embedded, at any nesting depth — scalars, lists, maps, lists-of-maps):
+
+```yaml
+apply:
+  set:
+    image.tag: "{{ git_short_sha }}"     # nested map value
+    rollmeTimestamp: "{{ now_unix }}"
+  values: ["cfg-{{ now_unix }}.yaml"]    # list element (embedded)
+tag: "v{{ git_short_sha }}"              # identity, embedded
+```
+
+It's an **allowlist** (only those two tokens), not arbitrary templating — any
+other `{{...}}` in a config value passes through untouched (so a command-template
+ref a tool's config might carry is left for the command template). git is only
+shelled out when a git token is actually present. There is no per-stage special
+case: this is config-layer behavior, uniform across all tools and stages.
+
 ## Engine internals (build notes)
 
 - `type` replaces today's `pattern` field as the step-sequence selector. The

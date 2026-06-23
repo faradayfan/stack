@@ -182,13 +182,17 @@ func (e *Engine) ValidateBindings() error {
 }
 
 // stepInputs composes pattern identity + the step block's config + dynamic inputs.
+// Runtime tokens ({{ now_unix }}, {{ git_short_sha }}) are resolved in the config
+// values here — the single choke point — so EVERY tool's config gets token
+// resolution uniformly, with no per-stage special case. Dynamic inputs are
+// engine-computed (already resolved) and pass through as-is.
 func (e *Engine) stepInputs(b config.StepBlock, dynamic map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range e.Cfg.Pattern.Identity() {
 		out[k] = v
 	}
 	for k, v := range b.Config {
-		out[k] = v
+		out[k] = resolveTokensDeep(v)
 	}
 	for k, v := range dynamic {
 		out[k] = v
