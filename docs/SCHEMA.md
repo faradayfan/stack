@@ -48,27 +48,47 @@ patterns:
 
     # what to build, keyed by name.
     artifacts:
-      myapp: { context: . }
+      myapp:
+        context: .
 
     # which tool runs each step, plus that step's config.
-    build:   { tool: docker }
-    deliver: { tool: docker, node: kind-control-plane }
-    scan:    { tool: grype, images: [myapp], fail_on: high }
+    build:
+      tool: docker
+    deliver:
+      tool: docker
+      node: kind-control-plane
+    scan:
+      tool: grype
+      images: [myapp]
+      fail_on: high
     apply:
       tool: helm
       chart: ./deploy/chart
       values: [./deploy/values.yaml]
-      repos: [{ name: bitnami, url: https://charts.bitnami.com/bitnami }]
-    wait_ready: { tool: helm }
-    teardown:   { tool: helm }
-    destroy:    { tool: kubectl }
-    status:     { tool: kubectl }
+      repos:
+        - name: bitnami
+          url: https://charts.bitnami.com/bitnami
+    wait_ready:
+      tool: helm
+    teardown:
+      tool: helm
+    destroy:
+      tool: kubectl
+    status:
+      tool: kubectl
 
     # the verification suite this pattern requires (the `stack check` flow).
     checks:
-      format: { tool: gofmt }
-      lint:   { tool: golangci, args: { timeout: 5m } }
-      unit:   { tool: go-test, args: { short: true } }
+      format:
+        tool: gofmt
+      lint:
+        tool: golangci
+        args:
+          timeout: 5m
+      unit:
+        tool: go-test
+        args:
+          short: true
 
     hooks:
       seed: "./deploy/seed.sh"
@@ -98,7 +118,8 @@ registry: registry.example.com
 platform: linux/arm64
 tag: "{{ git_short_sha }}"
 remote: true                       # confirm before deploy/down
-deliver: { delivery: push }        # override the template's `load`
+deliver:           # override the template's `load`
+  delivery: push
 apply:
   values: [./deploy/prod-values.yaml]
   set:
@@ -155,13 +176,19 @@ tool-agnostic — each artifact's fields are read by *its build tool's manifest*
 ```yaml
 # building images with docker
 artifacts:
-  api: { context: . }
-  ui:  { context: ./frontend, tag: latest }
+  api:
+    context: .
+  ui:
+    context: ./frontend
+    tag: latest
 
 # building a binary with go
 artifacts:
-  myapp: { package: ./cmd/myapp, output: bin/myapp }
-build: { tool: go }
+  myapp:
+    package: ./cmd/myapp
+    output: bin/myapp
+build:
+  tool: go
 ```
 
 An env overrides artifacts by key (the same merge rule): restate one to change a
@@ -212,14 +239,21 @@ silent no-op.)
 Each step a pattern runs is a block: a `tool` plus that step's config.
 
 ```yaml
-build:   { tool: docker }
-deliver: { tool: docker, node: kind-control-plane }
-scan:    { tool: grype, images: [api, ui], fail_on: high }
+build:
+  tool: docker
+deliver:
+  tool: docker
+  node: kind-control-plane
+scan:
+  tool: grype
+  images: [api, ui]
+  fail_on: high
 apply:
   tool: helm
   chart: ./deploy/chart
   values: [./deploy/values.yaml]
-  set: { replicas: "3" }
+  set:
+    replicas: "3"
 ```
 
 The fields a block accepts depend on its tool (the tool's manifest declares them
@@ -237,12 +271,29 @@ of "run one tool, get pass/fail":
 
 ```yaml
 checks:
-  format: { tool: gofmt }
-  lint:   { tool: golangci, args: { timeout: 5m } }
-  unit:   { tool: go-test, args: { short: true } }
-  vuln:   { tool: gosec, blocking: false }
-  scan:   { tool: grype-image, after: build, args: { target: "myapp:dev" } }
-  ui:     { tool: pnpm-script, dir: frontend, args: { script: build } }
+  format:
+    tool: gofmt
+  lint:
+    tool: golangci
+    args:
+      timeout: 5m
+  unit:
+    tool: go-test
+    args:
+      short: true
+  vuln:
+    tool: gosec
+    blocking: false
+  scan:
+    tool: grype-image
+    after: build
+    args:
+      target: "myapp:dev"
+  ui:
+    tool: pnpm-script
+    dir: frontend
+    args:
+      script: build
 ```
 
 Each check is one tool invocation. Fields:
