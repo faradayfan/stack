@@ -207,7 +207,8 @@ func envCmd(resolveEnv func() (string, string, error)) *cobra.Command {
 			p := cfg.Pattern
 			fmt.Printf("environment : %s\n", cfg.EnvName)
 			fmt.Printf("app         : %s\n", cfg.App)
-			fmt.Printf("pattern     : %s (type %s)\n", cfg.Name, p.Type)
+			fmt.Printf("pattern     : %s\n", cfg.Name)
+			fmt.Printf("pipeline    : %v\n", p.Pipeline)
 			fmt.Printf("kube_context: %s\n", p.KubeContext)
 			fmt.Printf("namespace   : %s\n", p.Namespace)
 			fmt.Printf("delivery    : %s\n", p.ImageDelivery)
@@ -296,18 +297,11 @@ func dispatch(e *engine.Engine, verb string, destroy bool) error {
 		// Forward verbs run the pattern's pipeline up to their terminal stage
 		// (so a `check`-first pipeline gates the build/deploy).
 		return e.RunPipeline(verb)
+	case "down":
+		// reverse/observe verbs run their step blocks directly (not the pipeline).
+		return e.Down(destroy)
+	case "status":
+		return e.Status()
 	}
-	// down/status are reverse/observe verbs — outside the forward pipeline.
-	switch e.Cfg.Pattern.Type {
-	case "k8s":
-		switch verb {
-		case "down":
-			return e.DownK8s(destroy)
-		case "status":
-			return e.StatusK8s()
-		}
-		return fmt.Errorf("unknown verb %q", verb)
-	default:
-		return fmt.Errorf("verb %q not supported for pattern type %q", verb, e.Cfg.Pattern.Type)
-	}
+	return fmt.Errorf("unknown verb %q", verb)
 }

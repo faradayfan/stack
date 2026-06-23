@@ -48,12 +48,6 @@ type Scan struct {
 	FailOn string   `yaml:"fail_on,omitempty"` // grype severity; default "high"
 }
 
-// HelmRepo is a chart repo to register before `helm dependency build`.
-type HelmRepo struct {
-	Name string `yaml:"name"`
-	URL  string `yaml:"url"`
-}
-
 // Check is one verification entry in the `stack check` flow — "run one tool, get
 // pass/fail". Its name is the MAP KEY in a pattern's `checks`.
 type Check struct {
@@ -83,8 +77,6 @@ type StepBlock struct {
 // complete template: engine type, identity, images, per-step blocks, checks,
 // hooks. An env merges its overrides into a copy of this.
 type Pattern struct {
-	Type string `yaml:"type"` // engine contract: k8s | native | compose
-
 	// identity — properties of the deployment shape (env may override).
 	KubeContext   string `yaml:"kube_context,omitempty"`
 	Namespace     string `yaml:"namespace,omitempty"`
@@ -97,10 +89,11 @@ type Pattern struct {
 	DefaultTag    string `yaml:"default_tag,omitempty"`
 
 	// Pipeline is the ordered list of fine-grained stages the pattern runs
-	// (check, build, scan, deliver, apply, wait). A forward verb runs the
-	// pipeline up to and including its terminal stage (check→check, build→build,
-	// deploy→the last stage), so list order IS gating order — put `check` first
-	// and everything after is gated by it. Empty → the engine's default sequence.
+	// (check, build, scan, deliver, apply, wait). A forward verb runs the pipeline
+	// up to and including its terminal stage (check→check, build→build, deploy→the
+	// last stage), so list order IS gating order — put `check` first and
+	// everything after is gated by it. A pattern IS its pipeline + step blocks;
+	// there is no `type` (each stage runs its step block's tool).
 	Pipeline []string `yaml:"pipeline,omitempty"`
 
 	Artifacts map[string]Artifact  `yaml:"artifacts,omitempty"`
@@ -296,8 +289,8 @@ func (a App) PatternNames() []string {
 }
 
 func (r Resolved) validate() error {
-	if r.Pattern.Type == "" {
-		return fmt.Errorf("pattern %q: `type` is required", r.Name)
+	if len(r.Pattern.Pipeline) == 0 {
+		return fmt.Errorf("pattern %q: a `pipeline` is required (e.g. [build] or [check, build, deliver, apply])", r.Name)
 	}
 	return nil
 }

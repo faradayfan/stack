@@ -27,7 +27,7 @@ const baseApp = `name: baseline
 tools_manager: asdf
 patterns:
   k8s:
-    type: k8s
+    pipeline: [build, deliver, scan, apply]
     default_tag: dev
     namespace: baseline
     artifacts:
@@ -55,7 +55,7 @@ kube_context: docker-desktop`,
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.App != "baseline" || r.Name != "k8s" || r.Pattern.Type != "k8s" {
+	if r.App != "baseline" || r.Name != "k8s" || len(r.Pattern.Pipeline) != 4 {
 		t.Fatalf("resolve wrong: %+v", r)
 	}
 	if r.Pattern.KubeContext != "docker-desktop" {
@@ -188,7 +188,7 @@ func TestSelectPattern(t *testing.T) {
 		t.Fatalf("auto-select single pattern: name=%q err=%v", name, err)
 	}
 	// add a second pattern → must require a name
-	app.Patterns["native"] = Pattern{Type: "native"}
+	app.Patterns["native"] = Pattern{Pipeline: []string{"build"}}
 	if _, _, err := app.SelectPattern(""); err == nil {
 		t.Error("expected error selecting among multiple patterns without --pattern")
 	}

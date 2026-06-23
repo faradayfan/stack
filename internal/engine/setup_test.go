@@ -18,7 +18,7 @@ func setupEngine(t *testing.T, toolsManager string, checks map[string]config.Che
 		t.Fatal(err)
 	}
 	app := config.App{Name: "x", ToolsManager: toolsManager}
-	pat := config.Pattern{Type: "k8s", Checks: checks}
+	pat := config.Pattern{Pipeline: []string{"check"}, Checks: checks}
 	return engine.NewForPattern(app, "k8s", pat, reg, false)
 }
 

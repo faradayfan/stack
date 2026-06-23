@@ -1,7 +1,15 @@
 # stack — schema v2: patterns + uniform merge (DESIGN)
 
-Status: agreed design, not yet built. This supersedes the app/env schema described
-in `DESIGN.md` (which stays accurate for the v1 schema until the migration lands).
+Status: built. This supersedes the app/env schema described in `DESIGN.md`.
+
+> **Evolution note — `type` was removed.** Earlier drafts gave each pattern a
+> `type:` (k8s/native/compose) that selected a hardcoded engine sequence. That's
+> gone. A pattern now **IS its `pipeline` + step blocks**: each pipeline stage runs
+> its step block's *tool* for the matching abstract step (`build` runs the `build:`
+> block's tool — `go` or `docker`; the manifest knows how). The engine no longer
+> switches on type. Tool-specific preamble (e.g. helm's repo-add + dependency-build)
+> lives in the manifest as a general `pre:` mechanism, not engine code. Mentions of
+> `type:` below are historical — read `pipeline:` + step blocks instead.
 
 ## Why
 
@@ -119,11 +127,11 @@ tools_manager: asdf                # app-global
 
 patterns:
   k8s:                             # name; envs select via `pattern: k8s`
-    type: k8s                      # engine contract
+    pipeline: [build, deliver, scan, apply]   # stage order (no `type`)
 
     default_tag: dev               # tag for images that don't pin their own
 
-    images:                        # keyed by image name; map-merge friendly
+    artifacts:                     # keyed by name; map-merge friendly
       baseline:            { context: . }
       baseline-ui:         { context: ./frontend }
       baseline-postgresql: { context: ./deploy/postgres, tag: "16-pgvector" }
@@ -255,6 +263,43 @@ A failing stage stops the run (a failed `check` never reaches `build`).
 their own standalone behavior. A pattern with **no** `pipeline:` falls back to the
 engine default for its type (k8s → `[build, deliver, scan, apply]`, native →
 `[build]`), so existing configs keep working unchanged.
+
+## Manifest `pre:` (tool preamble as data)
+
+A manifest step may declare `pre:` — commands run before its main `command`, same
+template inputs. It's the general mechanism for tool-specific setup, so the engine
+has no per-tool glue. Each `pre:` entry optionally takes `for: <collection>` to run
+once per item in that engine-provided collection (the item's fields become inputs);
+without `for`, it runs once. Helm uses it for its chart-deps preamble:
+
+```yaml
+# helm.yaml
+steps:
+  apply:
+    pre:
+      - { for: repos, command: "helm repo add {{.name}} {{.url}}" }  # once per repo
+      - "{{if .repos}}helm dependency build {{.chart}}{{end}}"       # once
+    command: "helm upgrade --install {{.release}} {{.chart}} ..."
+```
+
+## How a stage runs (no `type`)
+
+Each pipeline stage maps to an abstract step + a loop kind, fixed engine
+vocabulary:
+
+| stage | abstract step | loop |
+| --- | --- | --- |
+| `check` | (runs the check flow) | — |
+| `build` | build-artifact | per artifact |
+| `deliver` | deliver-artifact | per artifact |
+| `scan` | scan-artifact | per scan-image |
+| `apply` | apply | once |
+| `wait` | wait-ready | once |
+
+The stage runs its **step block's tool** for that abstract step. Per-artifact
+stages pass the whole artifact's fields (ref/context/args/platform AND
+package/output/ldflags) as inputs; each manifest template uses only what it needs
+(`missingkey=zero`), so `docker` and `go` share one code path with no type switch.
 
 ## Engine internals (build notes)
 

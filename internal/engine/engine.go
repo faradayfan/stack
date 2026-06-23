@@ -78,14 +78,19 @@ func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tmpl, ok, err := m.CommandFor(step, version)
+	def, ok, err := m.StepFor(step, version)
 	if err != nil {
 		return "", err
 	}
 	if !ok {
 		return "", fmt.Errorf("tool %q (v%s) does not provide step %q", block.Tool, version, step)
 	}
-	cmd, err := render(tmpl, e.stepInputs(block, inputs))
+	si := e.stepInputs(block, inputs)
+	// pre-commands (e.g. helm repo add / dependency build) run before the main one.
+	if err := e.runPre(def.Pre, step, block.Tool, si); err != nil {
+		return "", err
+	}
+	cmd, err := render(def.Command, si)
 	if err != nil {
 		return "", fmt.Errorf("render %q for step %q: %w", block.Tool, step, err)
 	}
@@ -93,6 +98,67 @@ func (e *Engine) Step(step string, inputs map[string]any) (string, error) {
 		return cmd, err
 	}
 	return cmd, nil
+}
+
+// runPre renders and runs a step's pre-commands. A PreStep with `for: <coll>`
+// runs once per item in that engine input collection (each item's fields merged
+// in as inputs); without `for`, it runs once. Empty/whitespace renders are
+// skipped (a conditional template that produced nothing).
+func (e *Engine) runPre(pre []plugins.PreStep, step, tool string, inputs map[string]any) error {
+	for _, p := range pre {
+		items := []map[string]any{nil} // run-once by default
+		if p.For != "" {
+			items = collectionItems(inputs[p.For])
+		}
+		for _, item := range items {
+			in := inputs
+			if item != nil {
+				in = map[string]any{}
+				for k, v := range inputs {
+					in[k] = v
+				}
+				for k, v := range item {
+					in[k] = v
+				}
+			}
+			cmd, err := render(p.Command, in)
+			if err != nil {
+				return fmt.Errorf("render pre for %q step %q: %w", tool, step, err)
+			}
+			if cmd == "" {
+				continue
+			}
+			if err := e.run(cmd); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// collectionItems normalizes a `for:` collection (a []any of maps from YAML, or a
+// []map) into a slice of string-keyed maps.
+func collectionItems(v any) []map[string]any {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, it := range list {
+		switch m := it.(type) {
+		case map[string]any:
+			out = append(out, m)
+		case map[any]any:
+			conv := map[string]any{}
+			for k, val := range m {
+				if ks, ok := k.(string); ok {
+					conv[ks] = val
+				}
+			}
+			out = append(out, conv)
+		}
+	}
+	return out
 }
 
 // ValidateBindings checks each pattern step block's config against its manifest's
@@ -130,9 +196,9 @@ func (e *Engine) stepInputs(b config.StepBlock, dynamic map[string]any) map[stri
 	return out
 }
 
-// block returns the resolved step block for an abstract step: the pattern's
-// explicit block, else a type default tool (so a minimal pattern still tears
-// down / observes).
+// block returns the resolved step block for an abstract step from the pattern's
+// explicit step blocks. There are no type defaults — a pattern declares the tool
+// for every step it runs (no magic; you always know what runs).
 func (e *Engine) block(abstract string) (config.StepBlock, bool) {
 	key, ok := stepKey[abstract]
 	if !ok {
@@ -140,9 +206,6 @@ func (e *Engine) block(abstract string) (config.StepBlock, bool) {
 	}
 	if b, ok := e.Cfg.Pattern.Step(key); ok && b.Tool != "" {
 		return b, true
-	}
-	if t, ok := defaultTool(e.Cfg.Pattern.Type, abstract); ok {
-		return config.StepBlock{Tool: t}, true
 	}
 	return config.StepBlock{}, false
 }
