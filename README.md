@@ -151,4 +151,4 @@ environment file; `--dry-run` prints the rendered commands instead of running th
 
 ## License
 
-(TODO: choose a license before publishing.)
+[MIT](LICENSE)
