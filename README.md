@@ -1,167 +1,138 @@
 # stack
 
-A small CLI that stands up, tears down, and deploys an app into one of a few
-**environment patterns** — `native` (run binaries + compose infra), `local-k8s`
-(docker-desktop cluster), `remote-k8s` (Pi) — driven by per-app + per-environment
-**context files**. Think "kubectl contexts, but for *how you run the whole app*."
+A small CLI for running and deploying an app — "kubectl contexts, but for *how you
+run the whole app*." You describe your app's build and deploy shape once, in
+declarative context files, and `stack` drives the underlying tools (docker, helm,
+kubectl, grype, go, …) for you.
 
-It exists because the same orchestration Makefile keeps getting rewritten per app
-(baseline, finances, …) with ~70% shared shape and inconsistent names. `stack`
-replaces that with one fixed vocabulary + declarative context, where tools and
-deployment patterns extend via data, not code.
+```console
+$ stack deploy --env prod
+$ stack build               # just compile/build the artifacts
+$ stack down --destroy      # tear down, drop volumes
+$ stack check               # run the verification suite (lint, tests, scans)
+```
 
-## Status: DESIGN COMPLETE, NOT YET BUILT
+## Why
 
-This repo currently holds the **design** only. No Go code yet. The design is
-settled enough to build against — start with **M1** (below).
+Most projects accrete an orchestration Makefile (or a pile of shell scripts) that
+builds images, scans them, loads or pushes them, renders a chart, and applies it —
+plus a parallel set of targets for each environment. The shape is ~the same across
+projects, but the names and details drift, and every tool-flag change means editing
+scripts.
 
-- **[docs/DESIGN.md](docs/DESIGN.md)** — commands, context-file schema, the three
-  patterns, secrets (1Password), hooks, Makefile→stack mapping, phased plan,
-  settled decisions.
-- **[docs/PLUGIN-MODEL.md](docs/PLUGIN-MODEL.md)** — the extension architecture:
-  abstract steps (the contract) ← tool manifests (plugins) ← env-context bindings.
+`stack` replaces that with **one fixed vocabulary** and **declarative context**.
+The deployment shape lives in data; swapping docker for podman, or handling a CLI's
+flag changes across versions, is a config/manifest edit — not a code change.
 
-## The model in three sentences
+## How it works
 
-1. The **engine** knows only **abstract steps** (`build-artifact`, `deliver`,
-   `scan`, `render-config`, `apply`, `wait-ready`, `teardown`, `status`, `logs`,
-   `resolve-secrets`, `hook`) and sequences them per **pattern**.
-2. **Plugins** are declarative YAML manifests that teach the engine how a specific
-   **tool + version** performs a step (e.g. `docker >=24` → `buildx build`).
-3. The **environment context** (`.stack/<env>.yaml`) binds each step to a tool and
-   supplies the values; `~/.stack/config/<repo>` tracks the selected env
-   (kubectl-style current-context).
+Three layers:
 
-The engine is a **version-aware template renderer + sequencer**. All tool, secret,
-and app-specific knowledge lives in data (manifests, context, hooks).
+1. **Abstract steps** — the engine speaks a fixed vocabulary: `build`, `deliver`,
+   `scan`, `apply`, `wait`, `teardown`, `destroy`, `status`, `check`. It knows
+   nothing about any specific tool.
+2. **Plugins** — declarative YAML manifests teach the engine how a specific
+   **tool + version** performs a step (e.g. `docker >=24` builds with
+   `buildx build`). One manifest per tool; built-ins ship in the binary. See
+   [docs/PLUGINS.md](docs/PLUGINS.md).
+3. **Patterns** — your `.stack/app.yaml` declares one or more named *patterns* (a
+   deployment shape: a pipeline of stages, the artifacts to build, and which tool
+   runs each step). Per-environment files select a pattern and override the bits
+   that differ. See [docs/SCHEMA.md](docs/SCHEMA.md).
 
-## Settled decisions (don't relitigate)
+The engine is a **version-aware template renderer + sequencer** — it names no
+tools; every command comes from a manifest. Adding a deployment style is new data,
+not new code.
 
-- Binary/repo/command: **`stack`** (module `github.com/faradayfan/stack`).
-- **Go CLI** (cobra-style), **orchestrates native tools** by shelling out (no SDKs).
-- **kubectl-style current-context**; `stack use <env>`, `--env` overrides.
-- **Declarative + hook escape hatches** (hooks declare explicit env-var mappings;
-  `type: bash` for M1).
-- Abstract-step contract · **one manifest per tool, version ranges inside** ·
-  **env context declares step→tool bindings** (no auto-pick of *which* tool;
-  engine auto-detects the *version*).
-- State at **`~/.stack/config/<repo>`** (per-user, not committed).
-- **Secrets from a pluggable provider** — default **1Password** via per-secret
-  `op read`, **one vault per app**, auth = whatever `op` session exists; a
-  `provider: file` fallback for the rare local case.
-- Execution always supports **`--dry-run`** (print the commands) and **confirms
-  before remote/destructive** actions.
+## Install
 
-See DESIGN.md "Decisions" + "Decided" for the full rationale.
+```console
+$ go install github.com/faradayfan/stack/cmd/stack@latest
+```
 
-## M1 — first milestone (build this first)
+Requires Go 1.26+. `stack` shells out to the tools your patterns reference (docker,
+helm, etc.); `stack setup` installs the ones your checks need (see
+[docs/SETUP.md](docs/SETUP.md)).
 
-**Goal:** `stack` drives **baseline** on the **local-k8s** pattern end-to-end,
-exactly reproducing today's `make local-up` / `make local-down`.
+## Quick start
 
-**Scope:** the `k8s` pattern with `image_delivery: load`; commands `use`, `env`,
-`up`/`deploy`, `down`, `status`; `--dry-run` from the first commit. Tool manifests
-needed: `docker` (build + load-to-node), `grype` (scan), `helm` (render/apply/
-wait/teardown), `kubectl` (status). Secrets/native/remote-k8s are later milestones.
-
-### Worked example — the exact commands M1 must produce
-
-Given this context (schema v2 — see [docs/SCHEMA-V2.md](docs/SCHEMA-V2.md)).
-**app.yaml** declares the pattern template:
+Create `.stack/app.yaml` describing how your app builds and deploys:
 
 ```yaml
-# .stack/app.yaml
-name: baseline
+name: myapp
 tools_manager: asdf
+
 patterns:
-  k8s:                       # name envs select; `type` is the engine contract
-    type: k8s
-    namespace: baseline
-    image_delivery: load
+  k8s:
+    # The ordered stages this pattern runs. `stack build` runs up to `build`;
+    # `stack deploy` runs the whole list. Put `check` first to gate on the checks.
+    pipeline: [build, deliver, scan, apply]
+
+    namespace: myapp
+    image_delivery: load     # load into the local cluster's containerd
     default_tag: dev
-    images:                  # keyed by name
-      baseline:            { context: . }
-      baseline-ui:         { context: ./frontend }
-      baseline-postgresql: { context: ./deploy/postgres, tag: "16-pgvector" }
-      baseline-mem0-api:   { context: ./deploy/mem0-api, tag: "ollama", args: { PATCH_OLLAMA: "1" } }
+
+    # What to build, keyed by name.
+    artifacts:
+      myapp: { context: . }
+
+    # Which tool runs each step (+ that step's config).
     build:   { tool: docker }
-    deliver: { tool: docker, node: desktop-control-plane }
-    scan:    { tool: grype, images: [baseline, baseline-ui], fail_on: high }
+    deliver: { tool: docker, node: kind-control-plane }
+    scan:    { tool: grype, images: [myapp], fail_on: high }
     apply:
       tool: helm
-      chart: deploy/charts/baseline
-      values: [deploy/local/values.yaml]
-      set: { rollmeTimestamp: "{{ now_unix }}" }
-      repos: [{ name: bitnami, url: https://charts.bitnami.com/bitnami }]
+      chart: ./deploy/chart
+      values: [./deploy/values.yaml]
     wait_ready: { tool: helm }
-    status:     { tool: kubectl }
+    teardown:   { tool: helm }     # stack down
+    destroy:    { tool: kubectl }  # stack down --destroy (drops PVCs)
+    status:     { tool: kubectl }  # stack status
 ```
 
-and **the env file** just selects + overrides the box's specifics:
+Add a per-environment file that selects the pattern and overrides what differs:
 
 ```yaml
-# .stack/local-k8s.yaml
+# .stack/local.yaml
 pattern: k8s
-kube_context: docker-desktop
+kube_context: kind-myapp
 ```
 
-`stack deploy --env local-k8s` must run the following (this is the acceptance
-fixture — verify via `--dry-run`), equivalent to today's `make local-up`:
+Then drive it:
 
-```bash
-# build-artifact (docker)
-docker build -t baseline:dev .
-docker build -t baseline-ui:dev ./frontend
-docker build -t baseline-postgresql:16-pgvector ./deploy/postgres
-docker build --build-arg PATCH_OLLAMA=1 -t baseline-mem0-api:ollama ./deploy/mem0-api
-# deliver-artifact (load into the node's containerd)
-docker save baseline:dev                    | docker exec -i desktop-control-plane ctr -n k8s.io images import -
-docker save baseline-ui:dev                 | docker exec -i desktop-control-plane ctr -n k8s.io images import -
-docker save baseline-postgresql:16-pgvector | docker exec -i desktop-control-plane ctr -n k8s.io images import -
-docker save baseline-mem0-api:ollama        | docker exec -i desktop-control-plane ctr -n k8s.io images import -
-# scan-artifact (first-party only, fail on high) — grype reads .grype.yaml
-grype baseline:dev
-grype baseline-ui:dev
-# render+apply (helm), with deps fetched first
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm dependency build deploy/charts/baseline
-helm upgrade --install baseline deploy/charts/baseline \
-  --kube-context docker-desktop -n baseline --create-namespace \
-  -f deploy/local/values.yaml --set rollmeTimestamp=<unix>
+```console
+$ stack use local                 # select the current environment (kubectl-style)
+$ stack env                        # show the resolved pattern + step → tool
+$ stack deploy --dry-run           # print the exact commands without running them
+$ stack deploy                     # build → deliver → scan → apply
+$ stack status
+$ stack down --destroy
 ```
 
-`stack down --env local-k8s` (= `make local-down`):
+## Commands
 
-```bash
-helm --kube-context docker-desktop -n baseline uninstall baseline || true
-# stack down --destroy also: kubectl --context docker-desktop -n baseline delete pvc --all
-```
+| Command | What it does |
+| --- | --- |
+| `stack use <env>` | Select the current environment for this repo (stored per-user, not committed). |
+| `stack env` | Show the resolved pattern and its step → tool bindings. |
+| `stack build` | Run the pipeline up to and including the `build` stage (artifacts only). |
+| `stack deploy` | Run the full forward pipeline. |
+| `stack down [--destroy]` | Tear down; `--destroy` also runs the pattern's `destroy` step (e.g. drop volumes). |
+| `stack status` | Show the running app. |
+| `stack check [--pattern <name>]` | Run the verification suite declared by the pattern (lint, tests, scans). |
+| `stack setup [--check]` | Install the tools the checks need at pinned versions; `--check` only diagnoses. |
 
-### M1 acceptance criteria
+Global flags: `--env <name>` overrides the selected environment; `--dry-run` prints
+the rendered commands instead of running them.
 
-1. `stack use local-k8s` records the current env at `~/.stack/config/<repo>`;
-   `stack env` prints the resolved config + step→tool bindings.
-2. `stack deploy --dry-run` prints **exactly** the command sequence above
-   (modulo the `rollmeTimestamp` value) — this is the regression fixture.
-3. `stack deploy` (no dry-run) actually stands baseline up on docker-desktop;
-   `kubectl -n baseline get pods` shows it Running. (Equivalent to `make local-up`.)
-4. `stack down` uninstalls; `stack down --destroy` also drops PVCs.
-5. `stack status` shows the namespace's pods.
-6. Tool manifests for docker/grype/helm/kubectl exist as data (embedded), with
-   docker's version-variant handling present even if only one variant is needed
-   for M1.
-7. A failing scan (grype high+) fails `deploy` before helm runs.
-8. Built/tested to the same bar as baseline: Go, unit tests on the
-   engine/template/version-range logic, `gofmt`/`golangci-lint` clean.
+## Documentation
 
-When M1 is green against baseline, M2 (remote-k8s/Pi, `image_delivery: push`) and
-M3 (native/compose + the finances app) follow the plan in DESIGN.md.
+- **[docs/SCHEMA.md](docs/SCHEMA.md)** — the context-file schema: patterns,
+  pipelines, artifacts, step blocks, the merge rules, template tokens, and checks.
+- **[docs/PLUGINS.md](docs/PLUGINS.md)** — writing a tool manifest (add support for
+  a new tool).
+- **[docs/SETUP.md](docs/SETUP.md)** — the `stack setup` tools-manager flow.
 
-## Source-of-truth pointers (for the implementer)
+## License
 
-- The behavior M1 must match lives in **`../baseline/Makefile`** (targets
-  `local-images`, `scan`, `local-up`, `local-down`, `helm-deps`) and
-  **`../baseline/deploy/local/values.yaml`**.
-- The second app to onboard (M3) is **`../finances/Makefile`** (targets `k8s-up`,
-  `redeploy`, `k8s-down`, `migrate-*`, the docker-compose `local-*` infra).
-- Both already carry a `.grype.yaml` and a `scan` make target to mirror.
+(TODO: choose a license before publishing.)
