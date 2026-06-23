@@ -1,0 +1,14 @@
+tool: go
+detect: "go version"
+setup:
+  asdf: golang
+provides: [build-artifact]
+config:
+  - { name: package }   # the Go package to build, e.g. ./cmd/stack
+  - { name: output }    # output binary path, e.g. bin/stack
+  - { name: ldflags }
+steps:
+  # Build a Go binary. {{.output}}/{{.package}} come from the artifact entry;
+  # GOOS/GOARCH could be added later for cross-compile (native pattern only).
+  build-artifact:
+    command: "go build {{if .ldflags}}-ldflags '{{.ldflags}}' {{end}}-o {{.output}} {{.package}}"

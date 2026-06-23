@@ -30,7 +30,7 @@ patterns:
     type: k8s
     default_tag: dev
     namespace: baseline
-    images:
+    artifacts:
       baseline: { context: . }
       ui:       { context: ./frontend, tag: "16-x" }
     build:   { tool: docker }
@@ -65,8 +65,8 @@ kube_context: docker-desktop`,
 		t.Errorf("template namespace not inherited: %q", r.Pattern.Namespace)
 	}
 	// tag defaulting / explicit tag
-	base, _ := r.Pattern.ImageByName("baseline")
-	ui, _ := r.Pattern.ImageByName("ui")
+	base, _ := r.Pattern.ArtifactByName("baseline")
+	ui, _ := r.Pattern.ArtifactByName("ui")
 	if got := r.Pattern.ImageRef(base, r.Pattern.Tag); got != "baseline:dev" {
 		t.Errorf("default tag: got %s", got)
 	}
@@ -124,7 +124,7 @@ tag: abc123`,
 	if r.Pattern.Registry != "reg.example:5000" || r.Pattern.Platform != "linux/arm64" {
 		t.Errorf("identity not merged: %+v", r.Pattern)
 	}
-	base, _ := r.Pattern.ImageByName("baseline")
+	base, _ := r.Pattern.ArtifactByName("baseline")
 	if got := r.Pattern.ImageRef(base, r.Pattern.Tag); got != "reg.example:5000/baseline:abc123" {
 		t.Errorf("env-tag+registry ref: got %s", got)
 	}
@@ -134,7 +134,7 @@ tag: abc123`,
 func TestResolve_ImageMapMerge(t *testing.T) {
 	root := writeCtx(t, baseApp,
 		`pattern: k8s
-images:
+artifacts:
   ui: { context: ./frontend, tag: env-tag }   # override
   worker: { context: ./worker }               # add
 `,
@@ -143,7 +143,7 @@ images:
 	if err != nil {
 		t.Fatal(err)
 	}
-	imgs := r.Pattern.SortedImages()
+	imgs := r.Pattern.SortedArtifacts()
 	wantOrder := []string{"baseline", "ui", "worker"}
 	if len(imgs) != 3 {
 		t.Fatalf("want 3 images, got %d: %+v", len(imgs), imgs)
@@ -153,7 +153,7 @@ images:
 			t.Errorf("image[%d] = %q want %q", i, imgs[i].Name, w)
 		}
 	}
-	ui, _ := r.Pattern.ImageByName("ui")
+	ui, _ := r.Pattern.ArtifactByName("ui")
 	if ui.Tag != "env-tag" {
 		t.Errorf("env override of ui.tag: got %q", ui.Tag)
 	}

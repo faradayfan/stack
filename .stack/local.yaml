@@ -1,0 +1,2 @@
+# Selects the `local` build pattern. `stack build --env local` compiles bin/stack.
+pattern: local
