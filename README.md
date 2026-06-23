@@ -75,20 +75,31 @@ patterns:
 
     # What to build, keyed by name.
     artifacts:
-      myapp: { context: . }
+      myapp:
+        context: .
 
     # Which tool runs each step (+ that step's config).
-    build:   { tool: docker }
-    deliver: { tool: docker, node: kind-control-plane }
-    scan:    { tool: grype, images: [myapp], fail_on: high }
+    build:
+      tool: docker
+    deliver:
+      tool: docker
+      node: kind-control-plane
+    scan:
+      tool: grype
+      images: [myapp]
+      fail_on: high
     apply:
       tool: helm
       chart: ./deploy/chart
       values: [./deploy/values.yaml]
-    wait_ready: { tool: helm }
-    teardown:   { tool: helm }     # stack down
-    destroy:    { tool: kubectl }  # stack down --destroy (drops PVCs)
-    status:     { tool: kubectl }  # stack status
+    wait_ready:
+      tool: helm
+    teardown:           # stack down
+      tool: helm
+    destroy:            # stack down --destroy (drops PVCs)
+      tool: kubectl
+    status:             # stack status
+      tool: kubectl
 ```
 
 Then drive it. If the app has a single pattern, `stack` runs it directly — no env

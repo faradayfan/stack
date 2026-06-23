@@ -61,8 +61,8 @@ detect: "docker version --format {{.Client.Version}}"   # prints the installed v
 provides: [build-artifact, deliver-artifact]            # abstract steps this tool can perform
 
 config:                            # config keys this tool accepts (for validation)
-  - { name: platform }
-  - { name: registry }
+  - name: platform
+  - name: registry
 
 variants:                          # version-conditional command sets
   - when: ">=20.0"
@@ -156,15 +156,16 @@ tool: helm
 detect: "helm version --template {{.Version}}"
 provides: [render-config, apply, wait-ready, teardown, status]
 config:
-  - { name: chart }
-  - { name: values }
-  - { name: set }
-  - { name: repos }
+  - name: chart
+  - name: values
+  - name: set
+  - name: repos
 steps:
   apply:
     pre:
       # once per item in `repos` (each item exposes name + url)
-      - { for: repos, command: "helm repo add {{.name}} {{.url}}" }
+      - for: repos
+        command: "helm repo add {{.name}} {{.url}}"
       # once, only when repos were declared
       - "{{if .repos}}helm dependency build {{.chart}}{{end}}"
     command: >-
@@ -184,10 +185,10 @@ early. A manifest with no `config` block accepts any keys (no validation).
 
 ```yaml
 config:
-  - { name: chart }
-  - { name: values }
-  - { name: set }
-  - { name: repos }
+  - name: chart
+  - name: values
+  - name: set
+  - name: repos
 ```
 
 Keys are not marked required for multi-step tools: helm provides `apply` (which
@@ -255,8 +256,8 @@ provides: [build-artifact, deliver-artifact]
 
 # Config keys a step block may carry for podman. Unknown keys are rejected.
 config:
-  - { name: platform }
-  - { name: registry }
+  - name: platform
+  - name: registry
 
 variants:
   # Modern podman: buildx-style platform flag and a single build/push path.
@@ -298,9 +299,12 @@ A pattern then uses it by naming the tool in a step block:
 patterns:
   k8s:
     pipeline: [build, deliver, apply]
-    build:   { tool: podman }
-    deliver: { tool: podman }
-    apply:   { tool: helm }
+    build:
+      tool: podman
+    deliver:
+      tool: podman
+    apply:
+      tool: helm
 ```
 
 A second example — `kustomize` providing config rendering and apply — shows a
@@ -311,7 +315,7 @@ tool: kustomize
 detect: "kustomize version"
 provides: [render-config, apply]
 config:
-  - { name: dir }
+  - name: dir
 steps:
   render-config:
     command: "kustomize build {{.dir}}"
