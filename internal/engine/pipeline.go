@@ -1,6 +1,10 @@
 package engine
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/faradayfan/stack/internal/config"
+)
 
 // The pipeline is the ordered list of fine-grained STAGES a pattern runs
 // (check, build, scan, deliver, apply, wait). A forward VERB runs the pipeline
@@ -12,58 +16,41 @@ import "fmt"
 //	  stack build  → check, build
 //	  stack deploy → check, build, scan, deliver, apply, wait
 //
-// A pattern with no `pipeline:` falls back to the default for its type (so older
-// configs keep working unchanged).
+// Each stage just runs its step block's TOOL for the matching abstract step —
+// the engine has no per-pattern-type code. `build` runs whatever tool the
+// `build:` block names (go OR docker); the manifest knows how. There is no
+// `type` field: a pattern IS its pipeline + step blocks.
+
+// loopKind is how a stage iterates.
+type loopKind int
+
+const (
+	loopOnce        loopKind = iota // run the step once
+	loopPerArtifact                 // run once per artifact in `artifacts:`
+	loopScanImages                  // run once per image named in the scan block
+)
+
+// stageDef maps a pipeline stage to the abstract step its tool performs and how
+// it loops. This is the engine's fixed vocabulary — the same for every pattern.
+type stageDef struct {
+	abstract string
+	loop     loopKind
+}
+
+var stageDefs = map[string]stageDef{
+	"build":   {"build-artifact", loopPerArtifact},
+	"deliver": {"deliver-artifact", loopPerArtifact},
+	"scan":    {"scan-artifact", loopScanImages},
+	"apply":   {"apply", loopOnce},
+	"wait":    {"wait-ready", loopOnce},
+	// "check" is special (runs the check flow, not a tool step) — see runStage.
+}
 
 // verbTerminal maps a forward verb to the pipeline stage it runs up to (and
 // including). `deploy` has no fixed terminal — it runs the whole pipeline.
 var verbTerminal = map[string]string{
 	"check": "check",
 	"build": "build",
-	// deploy → the last stage (handled in RunPipeline)
-}
-
-// defaultPipeline is the built-in stage order for a pattern type when the pattern
-// declares none. It preserves the pre-pipeline behavior.
-func defaultPipeline(patternType string) []string {
-	switch patternType {
-	case "k8s":
-		return []string{"build", "deliver", "scan", "apply"}
-	case "native":
-		return []string{"build"}
-	}
-	return nil
-}
-
-// stageActions returns the engine action for each stage name, for the current
-// pattern type. A nil entry means "this stage isn't valid for this type".
-func (e *Engine) stageActions() map[string]func() error {
-	common := map[string]func() error{
-		"check": func() error {
-			results, passed, err := e.Check(nil)
-			if e.Out != nil {
-				fmt.Fprint(e.Out, Summary(results))
-			}
-			if err != nil {
-				return err
-			}
-			if !passed {
-				return fmt.Errorf("checks failed")
-			}
-			return nil
-		},
-	}
-	switch e.Cfg.Pattern.Type {
-	case "k8s":
-		common["build"] = e.k8sBuild
-		common["deliver"] = e.k8sDeliver
-		common["scan"] = e.k8sScan
-		common["apply"] = e.k8sApply
-		common["wait"] = e.k8sWait
-	case "native":
-		common["build"] = e.BuildNative
-	}
-	return common
 }
 
 // RunPipeline runs the pattern's pipeline up to and including the verb's terminal
@@ -74,33 +61,102 @@ func (e *Engine) RunPipeline(verb string) error {
 	}
 	pipeline := e.Cfg.Pattern.Pipeline
 	if len(pipeline) == 0 {
-		pipeline = defaultPipeline(e.Cfg.Pattern.Type)
-	}
-	if len(pipeline) == 0 {
-		return fmt.Errorf("pattern %q (type %q) has no pipeline and no default", e.Cfg.Name, e.Cfg.Pattern.Type)
+		return fmt.Errorf("pattern %q declares no pipeline", e.Cfg.Name)
 	}
 
-	// Find the terminal stage index for this verb.
 	terminal := len(pipeline) - 1 // deploy → whole pipeline
 	if stage, ok := verbTerminal[verb]; ok {
 		idx := indexOf(pipeline, stage)
 		if idx < 0 {
-			return fmt.Errorf("verb %q needs stage %q, which is not in pattern %q's pipeline %v", verb, stage, e.Cfg.Name, pipeline)
+			return fmt.Errorf("verb %q needs stage %q, not in pattern %q's pipeline %v", verb, stage, e.Cfg.Name, pipeline)
 		}
 		terminal = idx
 	}
 
-	actions := e.stageActions()
 	for _, stage := range pipeline[:terminal+1] {
-		action, ok := actions[stage]
-		if !ok || action == nil {
-			return fmt.Errorf("pattern %q (type %q): unknown pipeline stage %q", e.Cfg.Name, e.Cfg.Pattern.Type, stage)
-		}
-		if err := action(); err != nil {
+		if err := e.runStage(stage); err != nil {
 			return fmt.Errorf("stage %q: %w", stage, err)
 		}
 	}
 	return nil
+}
+
+// runStage runs one pipeline stage generically: the `check` stage runs the check
+// flow; every other stage runs its step block's tool for the matching abstract
+// step, looping per its kind. The per-iteration inputs are the artifact's fields
+// plus a computed image `ref`; manifests ignore inputs they don't use
+// (missingkey=zero), so the same bag serves docker (ref/context) and go
+// (package/output).
+func (e *Engine) runStage(stage string) error {
+	if stage == "check" {
+		results, passed, err := e.Check(nil)
+		if e.Out != nil {
+			fmt.Fprint(e.Out, Summary(results))
+		}
+		if err != nil {
+			return err
+		}
+		if !passed {
+			return fmt.Errorf("checks failed")
+		}
+		return nil
+	}
+
+	def, ok := stageDefs[stage]
+	if !ok {
+		return fmt.Errorf("unknown pipeline stage %q", stage)
+	}
+	p := e.Cfg.Pattern
+	envTag := e.envTag()
+
+	switch def.loop {
+	case loopOnce:
+		// apply resolves its `set` tokens before rendering (and the helm manifest's
+		// `pre:` adds the repo/dep preamble); other once-stages just pass release.
+		if stage == "apply" {
+			return e.k8sApply()
+		}
+		_, err := e.Step(def.abstract, map[string]any{"release": e.Cfg.ReleaseName()})
+		return err
+	case loopPerArtifact:
+		for _, a := range p.SortedArtifacts() {
+			if _, err := e.Step(def.abstract, artifactInputs(p, a, envTag)); err != nil {
+				return err
+			}
+		}
+		return nil
+	case loopScanImages:
+		for _, name := range p.Scan().Images {
+			a, ok := p.ArtifactByName(name)
+			if !ok {
+				return fmt.Errorf("scan image %q not found in pattern artifacts", name)
+			}
+			if _, err := e.Step(def.abstract, map[string]any{
+				"target":  p.ImageRef(a, envTag),
+				"fail_on": p.Scan().FailOn,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("stage %q: unhandled loop kind", stage)
+}
+
+// artifactInputs is the generic per-artifact input bag for a build/deliver stage.
+// It carries BOTH the image fields (ref/context/args/platform) and the binary
+// fields (package/output/ldflags); the bound tool's manifest template uses only
+// the ones it needs (missingkey=zero), so docker and go share one code path.
+func artifactInputs(p config.Pattern, a config.Artifact, envTag string) map[string]any {
+	return map[string]any{
+		"ref":      p.ImageRef(a, envTag),
+		"context":  a.Context,
+		"args":     a.Args,
+		"platform": p.Platform,
+		"package":  a.Package,
+		"output":   a.Output,
+		"ldflags":  a.Ldflags,
+	}
 }
 
 func indexOf(ss []string, s string) int {

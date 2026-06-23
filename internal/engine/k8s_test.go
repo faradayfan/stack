@@ -18,7 +18,7 @@ func baselineLikeCfg() config.Resolved {
 		EnvName: "local-k8s",
 		Name:    "k8s",
 		Pattern: config.Pattern{
-			Type:          "k8s",
+			Pipeline:      []string{"build", "deliver", "scan", "apply"},
 			KubeContext:   "docker-desktop",
 			Namespace:     "baseline",
 			ImageDelivery: "load",
@@ -65,7 +65,7 @@ func dryRun(t *testing.T, fn func(e *engine.Engine) error) string {
 // TestDeployK8s_MatchesMakeLocalUp is the M1 acceptance fixture: the deploy
 // dry-run must produce exactly the make-local-up command sequence.
 func TestDeployK8s_MatchesMakeLocalUp(t *testing.T) {
-	got := dryRun(t, (*engine.Engine).DeployK8s)
+	got := dryRun(t, func(e *engine.Engine) error { return e.RunPipeline("deploy") })
 	wantLines := []string{
 		"docker build -t baseline:dev .",
 		"docker build -t baseline-ui:dev ./frontend",
@@ -100,7 +100,7 @@ func piLikeCfg() config.Resolved {
 		EnvName: "pi",
 		Name:    "k8s",
 		Pattern: config.Pattern{
-			Type:          "k8s",
+			Pipeline:      []string{"build", "deliver", "scan", "apply"},
 			KubeContext:   "k3s",
 			Namespace:     "baseline",
 			ImageDelivery: "push",
@@ -133,7 +133,7 @@ func TestDeployK8s_PushUsesBuildx(t *testing.T) {
 	e := engine.New(piLikeCfg(), reg, true)
 	var buf bytes.Buffer
 	e.Out = &buf
-	if err := e.DeployK8s(); err != nil {
+	if err := e.RunPipeline("deploy"); err != nil {
 		t.Fatalf("dry-run errored: %v", err)
 	}
 	got := buf.String()
@@ -161,7 +161,7 @@ func TestDeployK8s_SetResolvesGitShortSha(t *testing.T) {
 	e := engine.New(cfg, reg, true)
 	var buf bytes.Buffer
 	e.Out = &buf
-	if err := e.DeployK8s(); err != nil {
+	if err := e.RunPipeline("deploy"); err != nil {
 		t.Fatalf("dry-run errored: %v", err)
 	}
 	got := buf.String()
@@ -175,7 +175,7 @@ func TestDeployK8s_SetResolvesGitShortSha(t *testing.T) {
 }
 
 func TestDownK8s(t *testing.T) {
-	got := dryRun(t, func(e *engine.Engine) error { return e.DownK8s(false) })
+	got := dryRun(t, func(e *engine.Engine) error { return e.Down(false) })
 	want := "helm --kube-context docker-desktop -n baseline uninstall baseline"
 	if !strings.Contains(got, want) {
 		t.Errorf("down missing %q, got:\n%s", want, got)
@@ -183,14 +183,14 @@ func TestDownK8s(t *testing.T) {
 }
 
 func TestDownK8s_Destroy(t *testing.T) {
-	got := dryRun(t, func(e *engine.Engine) error { return e.DownK8s(true) })
+	got := dryRun(t, func(e *engine.Engine) error { return e.Down(true) })
 	if !strings.Contains(got, "kubectl --context docker-desktop -n baseline delete pvc --all") {
 		t.Errorf("down --destroy must drop PVCs, got:\n%s", got)
 	}
 }
 
 func TestStatusK8s(t *testing.T) {
-	got := dryRun(t, (*engine.Engine).StatusK8s)
+	got := dryRun(t, func(e *engine.Engine) error { return e.Status() })
 	if !strings.Contains(got, "kubectl --context docker-desktop -n baseline get pods") {
 		t.Errorf("status wrong, got:\n%s", got)
 	}

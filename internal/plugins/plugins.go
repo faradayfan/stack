@@ -18,9 +18,37 @@ var builtin embed.FS
 //go:embed managers/*.yaml
 var managerFS embed.FS
 
-// Step is the command template + (for documentation) the inputs it consumes.
+// Step is a tool's command for an abstract step: the main `command` plus any
+// `pre` commands run before it (same template inputs). `pre` is the general
+// escape hatch for tool-specific preamble (e.g. helm's repo-add + dependency-
+// build before upgrade) — it keeps that knowledge in the manifest, not the engine.
 type Step struct {
+	Command string    `yaml:"command"`
+	Pre     []PreStep `yaml:"pre,omitempty"`
+}
+
+// PreStep is one preamble command. With `for: <collection>` it runs once per item
+// in that engine-provided collection (the item's fields become template inputs);
+// without `for`, it runs once. Decodes from a bare string (run-once) or an object.
+type PreStep struct {
+	For     string `yaml:"for,omitempty"`
 	Command string `yaml:"command"`
+}
+
+// UnmarshalYAML lets a PreStep be a bare string (just a command, run once) or an
+// object { for, command }.
+func (p *PreStep) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		p.Command = node.Value
+		return nil
+	}
+	type raw PreStep
+	var r raw
+	if err := node.Decode(&r); err != nil {
+		return err
+	}
+	*p = PreStep(r)
+	return nil
 }
 
 // Variant binds a version range to a set of step commands.
@@ -99,33 +127,40 @@ func (m Manifest) ProvidesStep(step string) bool {
 // version. Returns ("", false, nil) when the step isn't provided by any matching
 // variant.
 func (m Manifest) CommandFor(step, version string) (string, bool, error) {
+	s, ok, err := m.StepFor(step, version)
+	return s.Command, ok, err
+}
+
+// StepFor returns the full Step (command + pre) for `step` at the installed
+// `version`, with the same incompatible/variant selection as CommandFor.
+func (m Manifest) StepFor(step, version string) (Step, bool, error) {
 	if m.Incompatible != "" {
 		bad, err := matchRange(version, m.Incompatible)
 		if err != nil {
-			return "", false, err
+			return Step{}, false, err
 		}
 		if bad {
-			return "", false, fmt.Errorf("tool %s version %s is incompatible (%s)", m.Name(), version, m.Incompatible)
+			return Step{}, false, fmt.Errorf("tool %s version %s is incompatible (%s)", m.Name(), version, m.Incompatible)
 		}
 	}
 	if len(m.Steps) > 0 { // version-independent
 		if s, ok := m.Steps[step]; ok {
-			return s.Command, true, nil
+			return s, true, nil
 		}
 	}
 	for _, v := range m.Variants {
 		ok, err := matchRange(version, v.When)
 		if err != nil {
-			return "", false, err
+			return Step{}, false, err
 		}
 		if !ok {
 			continue
 		}
 		if s, has := v.Steps[step]; has {
-			return s.Command, true, nil
+			return s, true, nil
 		}
 	}
-	return "", false, nil
+	return Step{}, false, nil
 }
 
 // Registry holds the loaded manifests, keyed by tool/provider name, plus the

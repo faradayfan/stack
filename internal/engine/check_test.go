@@ -18,7 +18,7 @@ func checkResolved(checks map[string]config.Check) config.Resolved {
 	return config.Resolved{
 		App:     "baseline",
 		Name:    "k8s",
-		Pattern: config.Pattern{Type: "k8s", Checks: checks},
+		Pattern: config.Pattern{Pipeline: []string{"check"}, Checks: checks},
 	}
 }
 

@@ -17,7 +17,7 @@ func TestBuildNative(t *testing.T) {
 		App:  "stack",
 		Name: "local",
 		Pattern: config.Pattern{
-			Type: "native",
+			Pipeline: []string{"build"},
 			Artifacts: map[string]config.Artifact{
 				"stack": {Package: "./cmd/stack", Output: "bin/stack"},
 			},
@@ -33,7 +33,7 @@ func TestBuildNative(t *testing.T) {
 	e := engine.New(cfg, reg, true)
 	var buf bytes.Buffer
 	e.Out = &buf
-	if err := e.BuildNative(); err != nil {
+	if err := e.RunPipeline("build"); err != nil {
 		t.Fatalf("BuildNative errored: %v", err)
 	}
 	got := strings.TrimSpace(buf.String())
@@ -49,7 +49,7 @@ func TestBuildNative_Ldflags(t *testing.T) {
 		App:  "stack",
 		Name: "local",
 		Pattern: config.Pattern{
-			Type: "native",
+			Pipeline: []string{"build"},
 			Artifacts: map[string]config.Artifact{
 				"stack": {Package: "./cmd/stack", Output: "bin/stack", Ldflags: "-s -w"},
 			},
@@ -60,7 +60,7 @@ func TestBuildNative_Ldflags(t *testing.T) {
 	e := engine.New(cfg, reg, true)
 	var buf bytes.Buffer
 	e.Out = &buf
-	if err := e.BuildNative(); err != nil {
+	if err := e.RunPipeline("build"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "-ldflags '-s -w'") {

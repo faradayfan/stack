@@ -13,7 +13,14 @@ config:
   - { name: repos }
 steps:
   # apply = upgrade --install; values + --set + namespace/context come from the env.
+  # The chart-deps preamble (repo add per repo + dependency build) is `pre:` — the
+  # general manifest mechanism for tool-specific setup, not engine-side helm glue.
   apply:
+    pre:
+      # one `helm repo add` per declared repo (item fields: name, url).
+      - { for: repos, command: "helm repo add {{.name}} {{.url}}" }
+      # dependency build, once — only when repos were declared.
+      - "{{if .repos}}helm dependency build {{.chart}}{{end}}"
     command: >-
       helm upgrade --install {{.release}} {{.chart}}
       --kube-context {{.kube_context}} -n {{.namespace}} --create-namespace

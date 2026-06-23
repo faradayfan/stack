@@ -16,7 +16,6 @@ func nativeWithPipeline(pipeline []string) config.Resolved {
 		App:  "stack",
 		Name: "local",
 		Pattern: config.Pattern{
-			Type:     "native",
 			Pipeline: pipeline,
 			Artifacts: map[string]config.Artifact{
 				"stack": {Package: "./cmd/stack", Output: "bin/stack"},
@@ -72,15 +71,12 @@ func TestPipeline_CheckVerbStopsAtCheck(t *testing.T) {
 	}
 }
 
-// TestPipeline_DefaultWhenUnset: a native pattern with no pipeline still builds
-// (falls back to the default [build]).
-func TestPipeline_DefaultWhenUnset(t *testing.T) {
-	out, err := runVerb(t, nativeWithPipeline(nil), "build")
-	if err != nil {
-		t.Fatalf("default pipeline errored: %v", err)
-	}
-	if !strings.Contains(out, "go build -o bin/stack") {
-		t.Errorf("default native pipeline should build:\n%s", out)
+// TestPipeline_RequiredWhenUnset: a pattern with no pipeline is a clear error
+// (there is no `type` to imply a default — a pattern IS its pipeline).
+func TestPipeline_RequiredWhenUnset(t *testing.T) {
+	_, err := runVerb(t, nativeWithPipeline(nil), "build")
+	if err == nil {
+		t.Error("expected an error: pattern declares no pipeline")
 	}
 }
 

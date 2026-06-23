@@ -4,9 +4,9 @@ name: stack
 tools_manager: asdf
 
 patterns:
-  # The CI/verification pattern — carries the checks (no build/deploy).
+  # The CI/verification pattern — checks only.
   ci:
-    type: native
+    pipeline: [check]
     checks:
       format: { tool: gofmt, blocking: true }
       unit: { tool: go-test, blocking: true, args: { short: true } }
@@ -14,8 +14,8 @@ patterns:
   # The local build pattern — `stack build` runs checks first, then compiles the
   # binary. The `pipeline` lists the stages in order; `stack build` runs up to &
   # including `build`, so `check` first means the build is gated by the checks.
+  # No `type`: the `build` stage runs whatever the `build:` block names (here go).
   local:
-    type: native
     pipeline: [check, build]
     checks:
       format: { tool: gofmt, blocking: true }
