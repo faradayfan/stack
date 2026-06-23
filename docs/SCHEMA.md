@@ -10,16 +10,26 @@ Context lives under `.stack/` in your repo:
 
 - **`.stack/app.yaml`** — declares the *deployment shapes* your app supports, as
   named **patterns**. Each pattern is a complete template: its pipeline, the
-  artifacts to build, which tool runs each step, the checks, and hooks.
-- **`.stack/<env>.yaml`** — one per environment. It **selects a pattern** and
-  **overrides** the parts that differ for that environment.
+  artifacts to build, which tool runs each step, the checks, and hooks. **A pattern
+  is the runnable unit.**
+- **`.stack/<env>.yaml`** — *optional*, one per environment. It **selects a
+  pattern** and **overrides** the parts that differ for that environment.
 
 The mental model: **app.yaml is the recipe; an env file is the ingredients for one
 kitchen.** Most env files are a few lines — "use the `k8s` pattern, but here's this
 cluster's context and registry."
 
-`stack use <env>` records the current environment per-repo (kubectl-style); a
-`--env <name>` flag overrides it for one command.
+If your app has no per-environment variance, you need no env file at all — `stack`
+runs the pattern directly. `stack` resolves which pattern to run in this order:
+
+1. `--pattern <name>` — that pattern from app.yaml, with no env overrides.
+2. `--env <name>` — that env file (which selects a pattern and supplies overrides).
+3. the current context set by `stack use <env>`.
+4. when none of the above is set, the sole pattern (an error if the app has
+   several — pass `--pattern`).
+
+`stack use <env>` records the current environment per-repo (kubectl-style).
+`--pattern` and `--env` are mutually exclusive.
 
 ## app.yaml
 

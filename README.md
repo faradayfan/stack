@@ -37,8 +37,9 @@ Three layers:
    [docs/PLUGINS.md](docs/PLUGINS.md).
 3. **Patterns** — your `.stack/app.yaml` declares one or more named *patterns* (a
    deployment shape: a pipeline of stages, the artifacts to build, and which tool
-   runs each step). Per-environment files select a pattern and override the bits
-   that differ. See [docs/SCHEMA.md](docs/SCHEMA.md).
+   runs each step). A pattern is the runnable unit. Optional per-environment files
+   select a pattern and override the bits that differ between environments. See
+   [docs/SCHEMA.md](docs/SCHEMA.md).
 
 The engine is a **version-aware template renderer + sequencer** — it names no
 tools; every command comes from a manifest. Adding a deployment style is new data,
@@ -90,23 +91,32 @@ patterns:
     status:     { tool: kubectl }  # stack status
 ```
 
-Add a per-environment file that selects the pattern and overrides what differs:
-
-```yaml
-# .stack/local.yaml
-pattern: k8s
-kube_context: kind-myapp
-```
-
-Then drive it:
+Then drive it. If the app has a single pattern, `stack` runs it directly — no env
+file required:
 
 ```console
-$ stack use local                 # select the current environment (kubectl-style)
 $ stack env                        # show the resolved pattern + step → tool
 $ stack deploy --dry-run           # print the exact commands without running them
 $ stack deploy                     # build → deliver → scan → apply
 $ stack status
 $ stack down --destroy
+```
+
+When you have environments that differ (a local cluster vs. a remote registry),
+add an env file that selects the pattern and overrides what changes:
+
+```yaml
+# .stack/prod.yaml
+pattern: k8s
+kube_context: prod
+registry: registry.example.com
+image_delivery: push
+```
+
+```console
+$ stack deploy --env prod          # use the prod overrides
+$ stack use prod                   # or set it as the current context (kubectl-style)
+$ stack deploy                     # ...then bare commands use it
 ```
 
 ## Commands
@@ -122,8 +132,14 @@ $ stack down --destroy
 | `stack check [--pattern <name>]` | Run the verification suite declared by the pattern (lint, tests, scans). |
 | `stack setup [--check]` | Install the tools the checks need at pinned versions; `--check` only diagnoses. |
 
-Global flags: `--env <name>` overrides the selected environment; `--dry-run` prints
-the rendered commands instead of running them.
+stack resolves which pattern to run in this order: `--pattern <name>` (a pattern
+from app.yaml directly, no env overrides) ▸ `--env <name>` (an env file) ▸ the
+current context from `stack use` ▸ the sole pattern when the app has exactly one.
+So an env file is optional — you only need one for per-environment overrides.
+
+Global flags: `--pattern <name>` runs a pattern directly; `--env <name>` selects an
+environment file; `--dry-run` prints the rendered commands instead of running them.
+(`--pattern` and `--env` are mutually exclusive.)
 
 ## Documentation
 

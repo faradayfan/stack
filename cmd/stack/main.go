@@ -25,41 +25,53 @@ func main() {
 
 func rootCmd() *cobra.Command {
 	var envFlag string
+	var patternFlag string
 	var dryRun bool
 
 	root := &cobra.Command{
 		Use:           "stack",
-		Short:         "Deploy an app into a target environment from .stack/ context files",
+		Short:         "Run and deploy an app from .stack/ context files",
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.PersistentFlags().StringVar(&envFlag, "env", "", "environment to act on (overrides the current context)")
+	root.PersistentFlags().StringVar(&envFlag, "env", "", "environment to act on (an .stack/<env>.yaml file)")
+	root.PersistentFlags().StringVar(&patternFlag, "pattern", "", "pattern to run directly, with no env overrides")
 	root.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "print the commands that would run, without running them")
 
-	// resolveEnv: the --env flag wins; else the repo's current-context.
-	resolveEnv := func() (root string, env string, err error) {
+	// resolveEnv: --env flag wins; else the repo's current-context (may be empty).
+	resolveEnv := func() (root string, env string) {
 		cwd, _ := os.Getwd()
 		repo := config.FindRepoRoot(cwd)
 		if envFlag != "" {
-			return repo, envFlag, nil
+			return repo, envFlag
 		}
-		st, err := config.LoadState(repo)
-		if err != nil {
-			return repo, "", err
+		if st, err := config.LoadState(repo); err == nil {
+			return repo, st.CurrentEnv
 		}
-		if st.CurrentEnv == "" {
-			return repo, "", fmt.Errorf("no current environment — run `stack use <env>` or pass --env")
-		}
-		return repo, st.CurrentEnv, nil
+		return repo, ""
 	}
 
+	// newEngine resolves the pattern to run, in precedence order:
+	//   1. --pattern  → that pattern from app.yaml, no env overrides
+	//   2. --env / current-context → that env file (selects a pattern + overrides)
+	//   3. neither set → auto-select the sole pattern (error if the app has several)
+	// An env file is therefore optional — only needed for per-environment overrides.
 	newEngine := func() (*engine.Engine, error) {
-		repo, env, err := resolveEnv()
-		if err != nil {
-			return nil, err
+		repo, env := resolveEnv()
+		if patternFlag != "" && envFlag != "" {
+			return nil, fmt.Errorf("--pattern and --env are mutually exclusive")
 		}
-		cfg, err := config.Load(repo, env)
+		var cfg config.Resolved
+		var err error
+		switch {
+		case patternFlag != "":
+			cfg, err = config.LoadPattern(repo, patternFlag)
+		case env != "":
+			cfg, err = config.Load(repo, env)
+		default:
+			cfg, err = config.LoadPattern(repo, "") // no env → run the sole pattern
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -72,22 +84,21 @@ func rootCmd() *cobra.Command {
 
 	root.AddCommand(
 		useCmd(),
-		envCmd(resolveEnv),
+		envCmd(newEngine),
 		buildCmd(newEngine),
 		deployCmd(newEngine),
 		downCmd(newEngine),
 		statusCmd(newEngine),
-		checkCmd(&dryRun),
-		setupCmd(&dryRun),
+		checkCmd(&dryRun, &patternFlag),
+		setupCmd(&dryRun, &patternFlag),
 	)
 	return root
 }
 
 // setupCmd installs/verifies the tools the checks need, via the configured tools
 // manager (asdf) or each tool's unmanaged fallback.
-func setupCmd(dryRun *bool) *cobra.Command {
+func setupCmd(dryRun *bool, patternFlag *string) *cobra.Command {
 	var doctor bool
-	var patternFlag string
 	c := &cobra.Command{
 		Use:   "setup",
 		Short: "Install/verify the tools the checks need (via the tools manager)",
@@ -101,7 +112,7 @@ func setupCmd(dryRun *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			patName, pat, err := app.SelectPattern(patternFlag)
+			patName, pat, err := app.SelectPattern(*patternFlag)
 			if err != nil {
 				return err
 			}
@@ -125,13 +136,11 @@ func setupCmd(dryRun *bool) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&doctor, "check", false, "diagnose only — report what's missing, install nothing")
-	c.Flags().StringVar(&patternFlag, "pattern", "", "which pattern's checks to set up (required if the app has more than one)")
 	return c
 }
 
 // checkCmd runs the env-independent verification flow (the `stack check` /CI flow).
-func checkCmd(dryRun *bool) *cobra.Command {
-	var patternFlag string
+func checkCmd(dryRun *bool, patternFlag *string) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "check [name...]",
 		Short: "Run the verification checks (tests, lint, format, scans) — the CI flow",
@@ -146,7 +155,7 @@ func checkCmd(dryRun *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			patName, pat, err := app.SelectPattern(patternFlag)
+			patName, pat, err := app.SelectPattern(*patternFlag)
 			if err != nil {
 				return err
 			}
@@ -166,7 +175,6 @@ func checkCmd(dryRun *bool) *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&patternFlag, "pattern", "", "which pattern's checks to run (required if the app has more than one)")
 	return c
 }
 
@@ -191,21 +199,22 @@ func useCmd() *cobra.Command {
 	}
 }
 
-func envCmd(resolveEnv func() (string, string, error)) *cobra.Command {
+func envCmd(newEngine func() (*engine.Engine, error)) *cobra.Command {
 	return &cobra.Command{
 		Use:   "env",
-		Short: "Show the current environment and its resolved config",
+		Short: "Show the resolved pattern (env, --pattern, or the sole pattern)",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			repo, env, err := resolveEnv()
+			e, err := newEngine()
 			if err != nil {
 				return err
 			}
-			cfg, err := config.Load(repo, env)
-			if err != nil {
-				return err
-			}
+			cfg := e.Cfg
 			p := cfg.Pattern
-			fmt.Printf("environment : %s\n", cfg.EnvName)
+			env := cfg.EnvName
+			if env == "" {
+				env = "(none)"
+			}
+			fmt.Printf("environment : %s\n", env)
 			fmt.Printf("app         : %s\n", cfg.App)
 			fmt.Printf("pattern     : %s\n", cfg.Name)
 			fmt.Printf("pipeline    : %v\n", p.Pipeline)
