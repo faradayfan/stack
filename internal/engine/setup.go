@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/faradayfan/stack/internal/config"
@@ -28,9 +29,9 @@ type SetupResult struct {
 // whether the overall setup is satisfied.
 func (e *Engine) Setup(doctorOnly bool) ([]SetupResult, bool, error) {
 	mgrName := e.Cfg.ToolsManager
-	tools := toolsFromChecks(e.Cfg.Pattern.SortedChecks())
+	tools := toolsForPattern(e.Cfg.Pattern)
 	if len(tools) == 0 {
-		return nil, true, fmt.Errorf("no checks declare tools to set up")
+		return nil, true, fmt.Errorf("pattern %q references no tools to set up", e.Cfg.Name)
 	}
 
 	var mgr plugins.Manager
@@ -46,12 +47,13 @@ func (e *Engine) Setup(doctorOnly bool) ([]SetupResult, bool, error) {
 	ok := true
 	for _, tool := range tools {
 		r := e.setupOne(tool, mgrName, mgr, haveMgr, doctorOnly)
-		if r.Err != nil || (!r.Present && !r.Installed) || (r.Installed && !r.Verified) {
-			// A tool that's still unsatisfied after setup fails the run. (manual /
-			// no-manager cases surface as not-present.)
-			if r.Method != "manual" || !doctorOnly {
-				ok = ok && r.Present
-			}
+		// "am I ready to run this pattern?": any required tool that isn't usable at
+		// the end leaves the run UNSATISFIED — including a presence-only deploy tool
+		// (helm/kubectl) stack can't install. The result message tells you how to
+		// fix each one; the overall gate is simply "is everything present/verified?".
+		usable := r.Err == nil && (r.Present || r.Installed) && !(r.Installed && !r.Verified)
+		if !usable {
+			ok = false
 		}
 		results = append(results, r)
 	}
@@ -67,9 +69,15 @@ func (e *Engine) setupOne(tool, mgrName string, mgr plugins.Manager, haveMgr, do
 		return r
 	}
 	if m.Setup == nil {
+		// Presence-only: a system tool stack doesn't install (docker, helm,
+		// kubectl, …). Verify it's on PATH and report; never try to install it.
 		r.Method = "manual"
 		r.Have, r.Present = e.toolVersion(m)
-		r.Action = "no setup method — install manually"
+		if r.Present {
+			r.Action = "present"
+		} else {
+			r.Action = "not found — install it (system tool; stack doesn't manage it)"
+		}
 		return r
 	}
 
@@ -222,14 +230,32 @@ func oneLine(s string) string {
 }
 
 // toolsFromChecks returns the distinct tool names referenced by the checks.
-func toolsFromChecks(checks []config.Check) []string {
+// toolsForPattern returns every tool the pattern references — both its check
+// tools and its step-block tools (build/deliver/scan/apply/…) — deduplicated and
+// in deterministic order. Setup answers "am I ready to RUN this pattern?", so it
+// covers deploy tools (docker/helm/kubectl), not only check tools. Installable
+// tools get installed; presence-only tools get a present/missing report.
+func toolsForPattern(p config.Pattern) []string {
 	seen := map[string]bool{}
 	var out []string
-	for _, c := range checks {
-		if c.Tool != "" && !seen[c.Tool] {
-			seen[c.Tool] = true
-			out = append(out, c.Tool)
+	add := func(tool string) {
+		if tool != "" && !seen[tool] {
+			seen[tool] = true
+			out = append(out, tool)
 		}
+	}
+	// checks first (in sorted-name order), then step blocks (sorted-key order),
+	// so the output is stable.
+	for _, c := range p.SortedChecks() {
+		add(c.Tool)
+	}
+	keys := make([]string, 0, len(p.Steps))
+	for k := range p.Steps {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		add(p.Steps[k].Tool)
 	}
 	return out
 }

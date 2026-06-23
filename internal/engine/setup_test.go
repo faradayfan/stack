@@ -49,6 +49,50 @@ func TestSetup_DoctorClassifiesMethods(t *testing.T) {
 	}
 }
 
+// TestSetup_IncludesStepTools: setup considers the tools the pattern's STEP
+// BLOCKS reference (docker/helm/kubectl), not only check tools. Step tools with no
+// `setup:` block are reported presence-only (method "manual"), never installed.
+func TestSetup_IncludesStepTools(t *testing.T) {
+	reg, err := plugins.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := config.App{Name: "x", ToolsManager: "asdf"}
+	pat := config.Pattern{
+		Pipeline: []string{"build", "apply"},
+		Checks:   map[string]config.Check{"fmt": {Tool: "gofmt"}},
+		Steps: map[string]config.StepBlock{
+			"build":  {Tool: "docker"},  // presence-only (no setup: block)
+			"apply":  {Tool: "helm"},    // presence-only
+			"status": {Tool: "kubectl"}, // presence-only
+		},
+	}
+	e := engine.NewForPattern(app, "k8s", pat, reg, false)
+	results, _, err := e.Setup(true) // doctor
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTool := map[string]engine.SetupResult{}
+	for _, r := range results {
+		byTool[r.Tool] = r
+	}
+	// the check tool is present...
+	if _, ok := byTool["gofmt"]; !ok {
+		t.Error("check tool gofmt missing from results")
+	}
+	// ...and so are the step tools.
+	for _, tool := range []string{"docker", "helm", "kubectl"} {
+		r, ok := byTool[tool]
+		if !ok {
+			t.Errorf("step tool %q not considered by setup", tool)
+			continue
+		}
+		if r.Method != "manual" {
+			t.Errorf("step tool %q: method = %q, want manual (presence-only)", tool, r.Method)
+		}
+	}
+}
+
 // TestSetup_AsdfToolNeedsManager: an asdf-managed tool with NO tools_manager set
 // is reported as needing a manager (not installed, not fatal).
 func TestSetup_AsdfToolNeedsManager(t *testing.T) {

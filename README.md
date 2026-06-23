@@ -130,7 +130,7 @@ $ stack deploy                     # ...then bare commands use it
 | `stack down [--destroy]` | Tear down; `--destroy` also runs the pattern's `destroy` step (e.g. drop volumes). |
 | `stack status` | Show the running app. |
 | `stack check [--pattern <name>]` | Run the verification suite declared by the pattern (lint, tests, scans). |
-| `stack setup [--check]` | Install the tools the checks need at pinned versions; `--check` only diagnoses. |
+| `stack setup [--check]` | Get ready to run the pattern: install/verify every tool it needs (checks + deploy tools) at pinned versions; `--check` only diagnoses. |
 
 stack resolves which pattern to run in this order: `--pattern <name>` (a pattern
 from app.yaml directly, no env overrides) ▸ `--env <name>` (an env file) ▸ the

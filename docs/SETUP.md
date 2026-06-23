@@ -1,38 +1,43 @@
-# `stack setup` — installing the tools your checks need
+# `stack setup` — getting ready to run a pattern
 
-How `stack` ensures the tools a pattern's checks reference are installed, at the
-versions the repo pins — via a pluggable tools manager (asdf), with a declared
-fallback for tools that have no manager plugin.
+How `stack` ensures the tools a pattern needs are present, at the versions the
+repo pins — via a pluggable tools manager (asdf), with a declared fallback for
+tools that have no manager plugin.
 
 ## The problem it solves
 
-A pattern's checks declare the tools they need (a linter, a formatter, a
-scanner). When one isn't installed, a check fails with a cryptic `exit 127`
-instead of a clear "install this." And the version a repo expects lives in its
-pin file (`.tool-versions` for asdf). `stack setup` makes "install what this repo
-needs, at the pinned version" a single command, honoring an asdf-first,
-repo-pinned, no-global-versions workflow.
+A pattern references tools in two places: its **checks** (a linter, a formatter, a
+scanner) and its **step blocks** (docker, helm, kubectl, …). When one is missing,
+you get a cryptic `exit 127` mid-run instead of a clear "install this" up front.
+And the version a repo expects lives in its pin file (`.tool-versions` for asdf).
+`stack setup` answers "am I ready to run this pattern?" in one command, honoring an
+asdf-first, repo-pinned, no-global-versions workflow.
 
 See [SCHEMA.md](SCHEMA.md) for the pattern, check, and step-block reference, and
 [PLUGINS.md](PLUGINS.md) for the tool-manifest shape that this flow extends.
 
 ## What `stack setup` does
 
-`stack setup` walks the tools referenced by the selected pattern's checks and,
-for each one:
+`stack setup` walks **every tool the selected pattern references** — both its check
+tools and its step-block tools — and for each one:
 
 - detects whether it's present and at what version;
-- if it's missing or at the wrong version, installs it via the tools manager
-  (asdf) or the tool's declared **unmanaged** fallback;
-- after installing, re-detects and verifies the version matches the pin — a
-  mismatch fails with a clear message. However a tool was installed, stack
-  confirms it ended up at the pinned version. This is the reproducibility
-  guardrail.
+- if the tool is **installable** (it declares a `setup:` method) and is missing or
+  at the wrong version, installs it via the tools manager (asdf) or the tool's
+  declared **unmanaged** fallback, then re-detects and verifies the version matches
+  the pin — a mismatch fails with a clear message;
+- if the tool is **presence-only** (a system tool like docker/helm/kubectl with no
+  `setup:` method), reports whether it's on `PATH` — stack never tries to install
+  it, but a missing one still means you're not ready.
+
+Any required tool that isn't usable at the end leaves the run unsatisfied (non-zero
+exit), so `stack setup --check` is a reliable readiness gate — for local onboarding
+or in CI.
 
 ```
-stack setup            # install missing / wrong-version tools
+stack setup            # install missing / wrong-version tools, report the rest
 stack setup --check    # doctor: report only, install nothing
-stack setup --pattern <name>   # choose which pattern's checks to set up
+stack setup --pattern <name>   # choose which pattern (when the app has several)
 ```
 
 Flags:
