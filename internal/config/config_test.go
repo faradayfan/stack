@@ -207,6 +207,37 @@ func TestSelectPattern(t *testing.T) {
 	}
 }
 
+// TestLoadPattern: a pattern resolves with no env file (auto-select single,
+// named select, and a clear error when ambiguous).
+func TestLoadPattern(t *testing.T) {
+	// app.yaml only — no env file written.
+	root := t.TempDir()
+	dir := filepath.Join(root, StackDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app.yaml"), []byte(baseApp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// one pattern → auto-select with empty name
+	r, err := LoadPattern(root, "")
+	if err != nil {
+		t.Fatalf("auto-select: %v", err)
+	}
+	if r.Name != "k8s" || r.EnvName != "" || len(r.Pattern.Pipeline) != 4 {
+		t.Errorf("resolved wrong: %+v", r)
+	}
+	// named select
+	if r, err := LoadPattern(root, "k8s"); err != nil || r.Name != "k8s" {
+		t.Errorf("named select: %+v err=%v", r, err)
+	}
+	// unknown name → error
+	if _, err := LoadPattern(root, "nope"); err == nil {
+		t.Error("expected error for unknown pattern name")
+	}
+}
+
 func TestStateRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("STACK_HOME", home)

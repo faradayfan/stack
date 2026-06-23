@@ -259,6 +259,27 @@ func Load(repoRoot, envName string) (Resolved, error) {
 	return r, nil
 }
 
+// LoadPattern resolves a pattern straight off app.yaml, with no env overrides —
+// for apps (or verbs) that need no per-environment file. `name` selects the
+// pattern; empty auto-selects when the app has exactly one. An env file is only
+// needed when you actually have environment-specific overrides; otherwise a
+// pattern is runnable directly (`stack <verb> --pattern <name>`).
+func LoadPattern(repoRoot, name string) (Resolved, error) {
+	app, err := LoadApp(repoRoot)
+	if err != nil {
+		return Resolved{}, err
+	}
+	patName, pat, err := app.SelectPattern(name)
+	if err != nil {
+		return Resolved{}, err
+	}
+	r := Resolved{App: app.Name, ToolsManager: app.ToolsManager, Name: patName, Pattern: pat}
+	if err := r.validate(); err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
 // SelectPattern returns the named pattern (or the sole one if name is empty and
 // there's exactly one). Used by the check flow, which is env-independent.
 func (a App) SelectPattern(name string) (string, Pattern, error) {
