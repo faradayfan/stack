@@ -53,6 +53,7 @@ var stepKey = map[string]string{
 	"apply":            "apply",
 	"wait-ready":       "wait_ready",
 	"teardown":         "teardown",
+	"destroy":          "destroy", // extra cleanup on `down --destroy` (e.g. drop PVCs)
 	"status":           "status",
 	"logs":             "logs",
 }

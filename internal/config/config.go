@@ -108,7 +108,7 @@ type Pattern struct {
 var stepKeys = map[string]bool{
 	"build": true, "deliver": true, "scan": true, "render": true,
 	"apply": true, "wait_ready": true, "status": true, "logs": true,
-	"teardown": true,
+	"teardown": true, "destroy": true,
 }
 
 // App is .stack/app.yaml: app-global identity + the patterns it supports.

@@ -1,11 +1,11 @@
 tool: kubectl
 detect: "kubectl version --client -o yaml"
-provides: [status, logs, teardown]
+provides: [status, logs, destroy]
 steps:
   status:
     command: "kubectl --context {{.kube_context}} -n {{.namespace}} get pods"
   logs:
     command: "kubectl --context {{.kube_context}} -n {{.namespace}} logs {{.component}}"
-  # destroy-volumes: used by `down --destroy` to drop PVCs after the helm uninstall.
-  teardown:
+  # destroy: `down --destroy` runs this after teardown to drop the PVCs (volumes).
+  destroy:
     command: "kubectl --context {{.kube_context}} -n {{.namespace}} delete pvc --all"

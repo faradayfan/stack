@@ -259,10 +259,12 @@ So with `pipeline: [check, build, scan, deliver, apply]`:
 `stack check` → check · `stack build` → check, build · `stack deploy` → all five.
 A failing stage stops the run (a failed `check` never reaches `build`).
 
-`down` and `status` are reverse/observe verbs — outside the forward pipeline, with
-their own standalone behavior. A pattern with **no** `pipeline:` falls back to the
-engine default for its type (k8s → `[build, deliver, scan, apply]`, native →
-`[build]`), so existing configs keep working unchanged.
+`down` and `status` are reverse/observe verbs — outside the forward pipeline. They
+run the pattern's `teardown`/`status` step blocks directly. `down --destroy`
+*additionally* runs the pattern's `destroy` step block (e.g. `kubectl delete pvc`)
+after teardown — volume cleanup is opt-in via the flag, and the tool that does it
+is data (a `--destroy` with no `destroy:` block declared is an error, not a silent
+no-op). A pattern with **no** `pipeline:` is an error — a pattern IS its pipeline.
 
 ## Manifest `pre:` (tool preamble as data)
 
@@ -325,11 +327,14 @@ case: this is config-layer behavior, uniform across all tools and stages.
 
 ## Engine internals (build notes)
 
-- `type` replaces today's `pattern` field as the step-sequence selector. The
-  engine maps `type` → ordered abstract steps; the pattern *name* is just a selector.
-- The object the engine consumes is the **resolved pattern** =
-  `merge(built-in defaults, pattern template, env overrides)`. Everything downstream
-  (Step, ImageRef, scan loop, check runner) reads from it.
+- **The engine names zero tools.** Every command comes from a step block's tool
+  via the manifest — `build`/`deliver`/`scan`/`apply`/`wait`/`teardown`/`destroy`/
+  `status` all run `e.Step(...)`, which resolves the bound tool. There is no
+  `docker`/`helm`/`kubectl` literal in the engine; a new deployment style is a new
+  manifest + a pattern, no engine change.
+- There is no `type`. A pattern IS its `pipeline` (stage order) + step blocks
+  (per-stage tool + config). The object the engine consumes is the **resolved
+  pattern** = `merge(built-in defaults, pattern template, env overrides)`.
 - **Step → tool binding comes from the merged step blocks** (`build.tool`,
   `deliver.tool`, `scan.tool`, `apply.tool`, `wait_ready.tool`, `status.tool`)
   instead of a separate `tools:` map. A step block carries both its tool and that

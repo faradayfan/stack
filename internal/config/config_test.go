@@ -40,6 +40,8 @@ patterns:
       tool: helm
       chart: deploy/charts/baseline
       values: [deploy/local/values.yaml]
+    teardown: { tool: helm }
+    destroy:  { tool: kubectl }
     checks:
       format: { tool: gofmt }
 `
@@ -85,6 +87,14 @@ kube_context: docker-desktop`,
 	build, ok := r.Pattern.Step("build")
 	if !ok || build.Tool != "docker" {
 		t.Errorf("build step: %+v ok=%v", build, ok)
+	}
+	// teardown + destroy parse (regression: `destroy` was missing from stepKeys,
+	// so it was silently dropped and `down --destroy` errored).
+	if d, ok := r.Pattern.Step("destroy"); !ok || d.Tool != "kubectl" {
+		t.Errorf("destroy step did not parse: %+v ok=%v", d, ok)
+	}
+	if tw, ok := r.Pattern.Step("teardown"); !ok || tw.Tool != "helm" {
+		t.Errorf("teardown step did not parse: %+v ok=%v", tw, ok)
 	}
 }
 
