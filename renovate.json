@@ -19,6 +19,11 @@
       "groupName": "non-major updates"
     },
     {
+      "description": "Pinning to a SHA keeps the SAME version you already run (just hardened), so it's not subject to the new-version stability delay — let it merge immediately.",
+      "matchUpdateTypes": ["pin", "pinDigest"],
+      "minimumReleaseAge": "0 days"
+    },
+    {
       "description": "Go module updates ship in the binary, so commit them as fix(deps) — each merged one cuts a patch release. Open a PR for review (no auto-merge).",
       "matchManagers": ["gomod"],
       "semanticCommitType": "fix",
