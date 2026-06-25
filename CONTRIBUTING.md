@@ -53,15 +53,28 @@ Tools are declarative YAML manifests, not Go code — see
 write a manifest under `internal/plugins/manifests/` describing how it performs
 the abstract steps it provides. No engine changes needed.
 
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/). Releases and the
+changelog are generated from commit history, so the prefix matters:
+
+- `fix:` → patch release
+- `feat:` → minor release
+- `feat!:` / `fix!:` (or a `BREAKING CHANGE:` footer) → major release
+- `docs:` / `chore:` / `refactor:` / `test:` / `ci:` → no release on their own
+
+A note on `refactor:` — if a change alters user-facing behavior (not just internal
+structure), use `feat:` so it ships in a release and lands in the changelog.
+
+A commit-msg hook enforces the format. Activate it once after cloning:
+
+```console
+$ git config core.hooksPath .githooks
+```
+
 ## Pull requests
 
 - Branch from `main`; keep PRs focused.
-- Use [Conventional Commits](https://www.conventionalcommits.org/) for commit
-  messages (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`, …). Releases and the
-  changelog are generated from commit history, so the prefix matters:
-  - `fix:` → patch release
-  - `feat:` → minor release
-  - `feat!:` / `fix!:` (or a `BREAKING CHANGE:` footer) → major release
 - Make sure `stack check` passes before opening the PR.
 
 ## Releases
@@ -70,6 +83,10 @@ Releases are automated. [Release Please](https://github.com/googleapis/release-p
 maintains a release PR that bumps the version and changelog from the commit
 history; merging it tags a GitHub Release, and the binaries are cross-compiled and
 attached automatically. Don't hand-tag versions.
+
+Dependency updates are automated by [Renovate](https://docs.renovatebot.com/),
+which opens `fix(deps):` PRs (so each merged update cuts a patch release) and
+holds new versions for 14 days before proposing them.
 
 ## License
 
