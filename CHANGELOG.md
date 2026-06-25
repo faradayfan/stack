@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/faradayfan/stack/compare/v0.1.1...v0.1.2) (2026-06-25)
+
+
+### Features
+
+* **cli:** notify when a newer stack release is available ([6810ee2](https://github.com/faradayfan/stack/commit/6810ee2e615932a1141bd566c9cb93f26a57945c))
+
 ## [0.1.1](https://github.com/faradayfan/stack/compare/v0.1.0...v0.1.1) (2026-06-25)
 
 
