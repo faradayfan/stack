@@ -21,6 +21,9 @@ patterns:
       test:
         tool: go-test
         blocking: true
+      scan-deps:
+        tool: grype-src
+        blocking: true
 
     artifacts:
       stack:
