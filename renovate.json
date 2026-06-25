@@ -2,6 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
+    "helpers:pinGitHubActionDigests",
     ":dependencyDashboard"
   ],
   "schedule": ["before 9am on monday"],
@@ -19,9 +20,9 @@
       "groupName": "non-major updates"
     },
     {
-      "description": "Auto-merge patch/minor GitHub Actions updates once CI passes.",
+      "description": "Auto-merge GitHub Actions updates once CI passes — including the initial SHA pin and digest refreshes (actions are SHA-pinned via helpers:pinGitHubActionDigests).",
       "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchUpdateTypes": ["pin", "minor", "patch", "digest"],
       "automerge": true
     },
     {
