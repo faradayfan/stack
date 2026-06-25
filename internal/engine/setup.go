@@ -51,7 +51,7 @@ func (e *Engine) Setup(doctorOnly bool) ([]SetupResult, bool, error) {
 		// the end leaves the run UNSATISFIED — including a presence-only deploy tool
 		// (helm/kubectl) stack can't install. The result message tells you how to
 		// fix each one; the overall gate is simply "is everything present/verified?".
-		usable := r.Err == nil && (r.Present || r.Installed) && !(r.Installed && !r.Verified)
+		usable := r.Err == nil && (r.Present || r.Installed) && (!r.Installed || r.Verified)
 		if !usable {
 			ok = false
 		}

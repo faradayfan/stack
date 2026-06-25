@@ -1,0 +1,32 @@
+name: Bug report
+description: Something isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >-
+        Steps to reproduce. Where possible, include the relevant `.stack/app.yaml`
+        / env file and the command you ran. The `--dry-run` output of the command
+        is especially useful (it shows exactly what stack rendered).
+      placeholder: |
+        1. .stack/app.yaml contains …
+        2. ran `stack deploy --env prod --dry-run`
+        3. got …
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: Environment
+      description: Output of `stack --version`, your OS, and Go version (`go version`).
+    validations:
+      required: true

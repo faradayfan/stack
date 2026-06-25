@@ -94,15 +94,18 @@ func TestSetup_IncludesStepTools(t *testing.T) {
 }
 
 // TestSetup_AsdfToolNeedsManager: an asdf-managed tool with NO tools_manager set
-// is reported as needing a manager (not installed, not fatal).
+// is classified as asdf and reported as needing a manager. (Whether the run is
+// "satisfied" depends on whether the tool happens to be present on the host — an
+// already-present tool is usable regardless of manager — so this asserts the
+// classification/action, which is deterministic, not the host-dependent ok gate.)
 func TestSetup_AsdfToolNeedsManager(t *testing.T) {
 	e := setupEngine(t, "", map[string]config.Check{"lint": {Tool: "golangci"}}) // no tools_manager
-	results, ok, err := e.Setup(true)
+	results, _, err := e.Setup(true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok {
-		t.Error("setup should not be satisfied when a managed tool has no manager")
+	if results[0].Method != "asdf" {
+		t.Errorf("expected method asdf, got %q", results[0].Method)
 	}
 	if !strings.Contains(results[0].Action, "tools_manager") {
 		t.Errorf("expected a 'needs tools_manager' action, got %q", results[0].Action)
