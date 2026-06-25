@@ -5,13 +5,16 @@ package main
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"runtime/debug"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/faradayfan/stack/internal/config"
 	"github.com/faradayfan/stack/internal/engine"
 	"github.com/faradayfan/stack/internal/plugins"
+	"github.com/faradayfan/stack/internal/selfupdate"
 )
 
 // version is stamped at release build time via -ldflags "-X main.version=…"
@@ -33,6 +36,24 @@ func versionString() string {
 		}
 	}
 	return version
+}
+
+// pseudoVersion matches a Go module pseudo-version's tail: a 14-digit UTC
+// timestamp followed by a 12-hex commit prefix (e.g. "20260625034148-122dbf7c4bc1").
+var pseudoVersion = regexp.MustCompile(`[0-9]{14}-[0-9a-f]{12}`)
+
+// isDevVersion reports whether v is a development build rather than a clean
+// release tag — "dev", a dirty build (build metadata after "+"), or a Go
+// pseudo-version (a commit-timestamp/sha suffix). Self-update is refused for
+// these: there's no clean release to compare against.
+func isDevVersion(v string) bool {
+	if v == "dev" || v == "" {
+		return true
+	}
+	if strings.Contains(v, "+") { // +dirty / other build metadata
+		return true
+	}
+	return pseudoVersion.MatchString(v)
 }
 
 func main() {
@@ -104,6 +125,7 @@ func rootCmd() *cobra.Command {
 
 	root.AddCommand(
 		versionCmd(),
+		updateCmd(),
 		useCmd(),
 		envCmd(newEngine),
 		buildCmd(newEngine),
@@ -127,6 +149,54 @@ func versionCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// updateCmd checks GitHub for a newer release and (without --check) downloads,
+// verifies, and replaces the running binary.
+func updateCmd() *cobra.Command {
+	var checkOnly bool
+	c := &cobra.Command{
+		Use:   "update",
+		Short: "Update stack to the latest release (--check only reports)",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cur := versionString()
+			// Self-update only makes sense from a real release build. A dev build
+			// ("dev") or a Go build-info pseudo-version (contains "+" build
+			// metadata like "+dirty", or a "-0.<timestamp>-<sha>" pseudo suffix)
+			// has no clean release to compare against.
+			if isDevVersion(cur) {
+				return fmt.Errorf("this is a development build (%s) — install a release to use self-update", cur)
+			}
+
+			if checkOnly {
+				rel, newer, err := selfupdate.Check(cur)
+				if err != nil {
+					return err
+				}
+				if newer {
+					fmt.Printf("a newer version is available: %s (current %s)\nrun `stack update` to install it\n", rel.Tag, cur)
+				} else {
+					fmt.Printf("stack is up to date (%s)\n", cur)
+				}
+				return nil
+			}
+
+			fmt.Printf("checking for updates (current %s)…\n", cur)
+			installed, err := selfupdate.Update(cur)
+			if err != nil {
+				return err
+			}
+			if installed == cur || installed == "v"+cur || "v"+installed == cur {
+				fmt.Printf("already up to date (%s)\n", cur)
+				return nil
+			}
+			fmt.Printf("updated stack %s → %s\n", cur, installed)
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&checkOnly, "check", false, "only check for a newer version; don't install")
+	return c
 }
 
 // setupCmd installs/verifies the tools the checks need, via the configured tools

@@ -143,6 +143,7 @@ $ stack deploy                     # ...then bare commands use it
 | `stack check [--pattern <name>]` | Run the verification suite declared by the pattern (lint, tests, scans). |
 | `stack setup [--check]` | Get ready to run the pattern: install/verify every tool it needs (checks + deploy tools) at pinned versions; `--check` only diagnoses. |
 | `stack version` | Print the version (also `stack --version`). |
+| `stack update [--check]` | Update to the latest release (downloads + checksum-verifies + replaces the binary); `--check` only reports whether a newer version exists. |
 
 stack resolves which pattern to run in this order: `--pattern <name>` (a pattern
 from app.yaml directly, no env overrides) ▸ `--env <name>` (an env file) ▸ the
