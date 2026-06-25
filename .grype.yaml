@@ -1,0 +1,4 @@
+# grype config, auto-loaded from the repo root. The `scan` check (grype-src) runs
+# `grype dir:.` and fails the build on a high or critical CVE in a dependency.
+# Add `ignore:` entries here (with a reason) for accepted/false-positive findings.
+fail-on-severity: high
