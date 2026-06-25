@@ -279,6 +279,16 @@ func render(tmpl string, inputs map[string]any) (string, error) {
 	if err := t.Execute(&b, inputs); err != nil {
 		return "", err
 	}
-	// Collapse the whitespace a folded (>-) YAML scalar leaves behind.
-	return strings.Join(strings.Fields(b.String()), " "), nil
+	// Collapse the wrapping whitespace a folded (>-) YAML scalar leaves behind,
+	// but PRESERVE newlines: a literal (|) block — e.g. an asdf install op with
+	// several commands — is a multi-line script whose line breaks are significant.
+	// So normalize each line's runs of spaces/tabs, then rejoin with newlines and
+	// drop blank lines.
+	var lines []string
+	for _, line := range strings.Split(b.String(), "\n") {
+		if joined := strings.Join(strings.Fields(line), " "); joined != "" {
+			lines = append(lines, joined)
+		}
+	}
+	return strings.Join(lines, "\n"), nil
 }
