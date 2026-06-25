@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/faradayfan/stack/compare/v0.1.0...v0.1.1) (2026-06-25)
+
+
+### Features
+
+* **cli:** add `stack update` self-updater ([eb69541](https://github.com/faradayfan/stack/commit/eb695415abdc71bb2529c86173039001e7fe1972))
+
 ## 0.1.0 (2026-06-25)
 
 
