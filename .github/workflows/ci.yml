@@ -24,9 +24,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # asdf provides the tools manager `stack setup` uses (golangci-lint is
-      # pinned in .tool-versions; go is already provided by setup-go above).
-      - uses: asdf-vm/actions/setup@v3
+      # Install the asdf CLI (the tools manager `stack setup` drives). v4 installs
+      # the released asdf binary and puts it + its shims on PATH; `stack setup`
+      # then installs the tools pinned in .tool-versions (golangci-lint; go is
+      # already provided by setup-go above).
+      - uses: asdf-vm/actions/setup@v4
 
       - name: Build stack
         run: go build -o bin/stack ./cmd/stack
