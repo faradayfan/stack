@@ -10,7 +10,6 @@
   "prHourlyLimit": 0,
   "labels": ["dependencies"],
   "semanticCommits": "enabled",
-  "semanticCommitType": "fix",
   "minimumReleaseAge": "14 days",
   "internalChecksFilter": "strict",
   "packageRules": [
@@ -20,21 +19,24 @@
       "groupName": "non-major updates"
     },
     {
-      "description": "Auto-merge GitHub Actions updates once CI passes — including the initial SHA pin and digest refreshes (actions are SHA-pinned via helpers:pinGitHubActionDigests).",
+      "description": "Go module updates ship in the binary, so commit them as fix(deps) — each merged one cuts a patch release. Open a PR for review (no auto-merge).",
+      "matchManagers": ["gomod"],
+      "semanticCommitType": "fix",
+      "automerge": false
+    },
+    {
+      "description": "GitHub Actions are CI tooling, not part of the binary — keep chore(deps) (no release). Auto-merge once CI passes, including the initial SHA pin and digest refreshes (actions are SHA-pinned via helpers:pinGitHubActionDigests).",
       "matchManagers": ["github-actions"],
+      "semanticCommitType": "chore",
       "matchUpdateTypes": ["pin", "minor", "patch", "digest"],
       "automerge": true
     },
     {
-      "description": "Auto-merge patch updates to asdf-pinned tools (.tool-versions).",
+      "description": "asdf-pinned dev tools — chore(deps) (no release); auto-merge patch updates.",
       "matchManagers": ["asdf"],
+      "semanticCommitType": "chore",
       "matchUpdateTypes": ["patch"],
       "automerge": true
-    },
-    {
-      "description": "Major bumps and Go module updates open a PR for review.",
-      "matchManagers": ["gomod"],
-      "automerge": false
     }
   ]
 }
