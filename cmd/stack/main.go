@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 
@@ -13,8 +14,26 @@ import (
 	"github.com/faradayfan/stack/internal/plugins"
 )
 
-// version is stamped at release build time via -ldflags "-X main.version=…".
+// version is stamped at release build time via -ldflags "-X main.version=…"
+// (GoReleaser sets it to the git tag). When that's absent — e.g. a plain
+// `go build` or `go install …@v0.1.0`, which don't pass ldflags — it falls back
+// to the module version recorded in the binary's build info.
 var version = "dev"
+
+// versionString resolves the version: the ldflag-stamped value if set, else the
+// module version from the embedded build info (populated by `go install @vX`),
+// else "dev".
+func versionString() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return version
+}
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
@@ -31,10 +50,11 @@ func rootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "stack",
 		Short:         "Run and deploy an app from .stack/ context files",
-		Version:       version,
+		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("stack {{.Version}}\n")
 	root.PersistentFlags().StringVar(&envFlag, "env", "", "environment to act on (an .stack/<env>.yaml file)")
 	root.PersistentFlags().StringVar(&patternFlag, "pattern", "", "pattern to run directly, with no env overrides")
 	root.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "print the commands that would run, without running them")
@@ -83,6 +103,7 @@ func rootCmd() *cobra.Command {
 	}
 
 	root.AddCommand(
+		versionCmd(),
 		useCmd(),
 		envCmd(newEngine),
 		buildCmd(newEngine),
@@ -93,6 +114,19 @@ func rootCmd() *cobra.Command {
 		setupCmd(&dryRun, &patternFlag),
 	)
 	return root
+}
+
+// versionCmd prints the version (the same value as `stack --version`).
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the stack version",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			fmt.Printf("stack %s\n", versionString())
+			return nil
+		},
+	}
 }
 
 // setupCmd installs/verifies the tools the checks need, via the configured tools
