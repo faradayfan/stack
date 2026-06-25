@@ -1,0 +1,48 @@
+# GoReleaser builds the release artifacts. It runs on a tag pushed by
+# release-please (the tag is the version; GoReleaser does not compute it).
+# https://goreleaser.com
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: stack
+    main: ./cmd/stack
+    binary: stack
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: stack
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  # release-please already maintains CHANGELOG.md from Conventional Commits;
+  # keep GoReleaser's own notes minimal to avoid duplication.
+  disable: true
+
+release:
+  # release-please creates the GitHub Release; GoReleaser attaches artifacts to it.
+  github:
+    owner: faradayfan
+    name: stack

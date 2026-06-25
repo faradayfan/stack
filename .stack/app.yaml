@@ -1,14 +1,30 @@
-# stack's own context (schema v2). stack dogfoods itself: it runs its own check/
-# setup flows AND builds its own binary via the `go` build plugin.
+# stack's own context. stack dogfoods itself: CI runs `stack check`, and the
+# binary is built via the `go` build plugin (`stack build`).
 name: stack
 tools_manager: asdf
 
 patterns:
   build:
     pipeline: [check, build]
+
+    # The verification suite CI gates on (run via `stack check`). golangci-lint
+    # runs `go vet` internally, so there's no separate vet check.
     checks:
-      format: { tool: gofmt, blocking: true }
-      unit: { tool: go-test, blocking: true, args: { short: true } }
+      format:
+        tool: gofmt
+        blocking: true
+      lint:
+        tool: golangci
+        blocking: true
+        args:
+          timeout: 5m
+      test:
+        tool: go-test
+        blocking: true
+
     artifacts:
-      stack: { package: ./cmd/stack, output: bin/stack }
-    build: { tool: go }
+      stack:
+        package: ./cmd/stack
+        output: bin/stack
+    build:
+      tool: go

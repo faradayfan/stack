@@ -215,9 +215,6 @@ func (e *Engine) block(abstract string) (config.StepBlock, bool) {
 	return config.StepBlock{}, false
 }
 
-// binding is the old name kept for the pattern_k8s apply-config reader.
-func (e *Engine) binding(step string) (config.StepBlock, bool) { return e.block(step) }
-
 // RunRaw runs (or prints) a literal command not driven by a tool manifest —
 // for engine-level glue like `helm repo add` / `helm dependency build` that
 // belongs to a step's preamble. Kept explicit so the dry-run output is complete.

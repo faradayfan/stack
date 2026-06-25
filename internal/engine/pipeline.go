@@ -91,7 +91,7 @@ func (e *Engine) runStage(stage string) error {
 	if stage == "check" {
 		results, passed, err := e.Check(nil)
 		if e.Out != nil {
-			fmt.Fprint(e.Out, Summary(results))
+			_, _ = fmt.Fprint(e.Out, Summary(results))
 		}
 		if err != nil {
 			return err

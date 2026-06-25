@@ -1,0 +1,38 @@
+name: CI
+
+# stack dogfoods itself: CI builds the binary, lets `stack setup` install the
+# tools its checks need (via asdf), then runs `stack check` — the single
+# declarative definition of the verification suite (format + lint + test).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: stack check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # asdf provides the tools manager `stack setup` uses (golangci-lint is
+      # pinned in .tool-versions; go is already provided by setup-go above).
+      - uses: asdf-vm/actions/setup@v3
+
+      - name: Build stack
+        run: go build -o bin/stack ./cmd/stack
+
+      - name: Install check tools (stack setup)
+        run: ./bin/stack setup
+
+      - name: Run checks (stack check)
+        run: ./bin/stack check
