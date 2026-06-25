@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -74,6 +75,13 @@ func rootCmd() *cobra.Command {
 		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Best-effort update notice at the start of each command. It's cached
+		// (network at most once a day), silent on any error, and suppressed for
+		// non-interactive output, dev builds, an explicit opt-out, and the
+		// update/version commands themselves — so it never adds latency or noise.
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			maybeNotifyUpdate(cmd)
+		},
 	}
 	root.SetVersionTemplate("stack {{.Version}}\n")
 	root.PersistentFlags().StringVar(&envFlag, "env", "", "environment to act on (an .stack/<env>.yaml file)")
@@ -149,6 +157,42 @@ func versionCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// maybeNotifyUpdate prints a one-line "newer version available" notice to stderr
+// if one is cached/found. Best-effort and heavily guarded so it never slows a
+// command or pollutes output: skipped for dev builds, the update/version
+// commands, an explicit opt-out (STACK_NO_UPDATE_CHECK), and non-interactive
+// stderr (CI, pipes). The check itself is cached to ~once a day and silent on any
+// error (see selfupdate.CheckCached).
+func maybeNotifyUpdate(cmd *cobra.Command) {
+	if os.Getenv("STACK_NO_UPDATE_CHECK") != "" {
+		return
+	}
+	switch cmd.Name() {
+	case "update", "version", "help":
+		return // redundant or noisy here
+	}
+	cur := versionString()
+	if isDevVersion(cur) {
+		return // no clean release to compare against
+	}
+	if !isTerminal(os.Stderr) {
+		return // don't pollute CI logs / piped output
+	}
+	latest, newer := selfupdate.CheckCached(cur, 24*time.Hour)
+	if newer {
+		fmt.Fprintf(os.Stderr, "A new version of stack is available: %s (you have %s). Run `stack update` to upgrade.\n", latest, cur)
+	}
+}
+
+// isTerminal reports whether f is an interactive terminal (a character device).
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // updateCmd checks GitHub for a newer release and (without --check) downloads,

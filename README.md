@@ -154,6 +154,10 @@ Global flags: `--pattern <name>` runs a pattern directly; `--env <name>` selects
 environment file; `--dry-run` prints the rendered commands instead of running them.
 (`--pattern` and `--env` are mutually exclusive.)
 
+stack checks for a newer release at most once a day and prints a one-line notice
+if one is available (only on an interactive terminal — never in CI/pipes). Set
+`STACK_NO_UPDATE_CHECK=1` to disable it.
+
 ## Documentation
 
 - **[docs/SCHEMA.md](docs/SCHEMA.md)** — the context-file schema: patterns,
