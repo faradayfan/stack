@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/faradayfan/stack/compare/v0.1.2...v0.1.3) (2026-07-10)
+
+
+### Features
+
+* **docker:** support a per-artifact Dockerfile override (-f) ([f44867d](https://github.com/faradayfan/stack/commit/f44867dfd4215e58908d0bb9d84b603150edc298))
+
+
+### Bug Fixes
+
+* bumped go version ([21c390f](https://github.com/faradayfan/stack/commit/21c390f5c05a8d2a9702634961af9cff7e8b9b00))
+
 ## [0.1.2](https://github.com/faradayfan/stack/compare/v0.1.1...v0.1.2) (2026-06-25)
 
 
