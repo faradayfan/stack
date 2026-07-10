@@ -31,9 +31,14 @@ type Artifact struct {
 	Name string `yaml:"-"`
 
 	// image fields (docker / k8s)
-	Context string            `yaml:"context,omitempty"`
-	Tag     string            `yaml:"tag,omitempty"` // explicit tag wins over the env/default tag
-	Args    map[string]string `yaml:"args,omitempty"`
+	Context string `yaml:"context,omitempty"`
+	// Dockerfile is an optional path to a non-default Dockerfile (docker's -f), so
+	// several images can build from ONE context with different Dockerfiles (e.g. a
+	// migrate image built from backend/ with -f backend/Dockerfile.migrate). Empty
+	// = the context's default Dockerfile.
+	Dockerfile string            `yaml:"dockerfile,omitempty"`
+	Tag        string            `yaml:"tag,omitempty"` // explicit tag wins over the env/default tag
+	Args       map[string]string `yaml:"args,omitempty"`
 
 	// binary fields (go / native)
 	Package string `yaml:"package,omitempty"` // the Go package to build (e.g. ./cmd/stack)

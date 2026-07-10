@@ -170,8 +170,13 @@ with a build arg that one environment must not apply:
 A pattern's build targets live in `artifacts:`, keyed by name. The collection is
 tool-agnostic — each artifact's fields are read by *its build tool's manifest*:
 
-- a docker build reads `context`, `tag`, `args` → an image reference;
+- a docker build reads `context`, `dockerfile`, `tag`, `args` → an image reference;
 - a go build reads `package`, `output`, `ldflags` → a binary.
+
+`dockerfile` is optional — a non-default Dockerfile path (docker's `-f`), so several
+images can build from one shared context with different Dockerfiles (e.g. an app
+image and a migrate image both built from `backend/`). Omit it to use the context's
+default `Dockerfile`.
 
 ```yaml
 # building images with docker
@@ -181,6 +186,9 @@ artifacts:
   ui:
     context: ./frontend
     tag: latest
+  migrate:
+    context: backend                       # same context as the app image…
+    dockerfile: backend/Dockerfile.migrate # …but a different Dockerfile
 
 # building a binary with go
 artifacts:

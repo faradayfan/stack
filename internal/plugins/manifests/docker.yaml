@@ -6,6 +6,7 @@ config:
   - { name: registry }
   - { name: platform }
   - { name: tag }
+  - { name: dockerfile }
 variants:
   # Modern docker (buildx available). Two delivery shapes:
   #   - load (local k8s): classic `docker build` then save | ctr-import into the
@@ -16,10 +17,13 @@ variants:
   - when: ">=20.0"
     steps:
       build-artifact:
+        # `-f <dockerfile>` (when the artifact declares one) lets several images
+        # build from ONE context with different Dockerfiles; omitted otherwise so
+        # docker uses the context's default Dockerfile.
         command: >-
           {{if eq .delivery "push"}}docker buildx build
-          {{if .platform}}--platform {{.platform}} {{end}}{{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} --push {{.context}}{{else}}docker build
-          {{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} {{.context}}{{end}}
+          {{if .platform}}--platform {{.platform}} {{end}}{{if .dockerfile}}-f {{.dockerfile}} {{end}}{{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} --push {{.context}}{{else}}docker build
+          {{if .dockerfile}}-f {{.dockerfile}} {{end}}{{range $k, $v := .args}}--build-arg {{$k}}={{$v}} {{end}}-t {{.ref}} {{.context}}{{end}}
       deliver-artifact:
         # load → import into the node's containerd; push → already delivered by
         # buildx --push during build, so a no-op.
