@@ -143,18 +143,19 @@ func (e *Engine) runStage(stage string) error {
 }
 
 // artifactInputs is the generic per-artifact input bag for a build/deliver stage.
-// It carries BOTH the image fields (ref/context/args/platform) and the binary
-// fields (package/output/ldflags); the bound tool's manifest template uses only
-// the ones it needs (missingkey=zero), so docker and go share one code path.
+// It carries BOTH the image fields (ref/context/dockerfile/args/platform) and the
+// binary fields (package/output/ldflags); the bound tool's manifest template uses
+// only the ones it needs (missingkey=zero), so docker and go share one code path.
 func artifactInputs(p config.Pattern, a config.Artifact, envTag string) map[string]any {
 	return map[string]any{
-		"ref":      p.ImageRef(a, envTag),
-		"context":  a.Context,
-		"args":     a.Args,
-		"platform": p.Platform,
-		"package":  a.Package,
-		"output":   a.Output,
-		"ldflags":  a.Ldflags,
+		"ref":        p.ImageRef(a, envTag),
+		"context":    a.Context,
+		"dockerfile": a.Dockerfile,
+		"args":       a.Args,
+		"platform":   p.Platform,
+		"package":    a.Package,
+		"output":     a.Output,
+		"ldflags":    a.Ldflags,
 	}
 }
 

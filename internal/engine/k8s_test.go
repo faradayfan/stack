@@ -124,6 +124,63 @@ func piLikeCfg() config.Resolved {
 	}
 }
 
+// TestDeployK8s_ArtifactDockerfile: an artifact may build from a shared context
+// with a NON-default Dockerfile (e.g. a migrate image built from backend/ with
+// -f backend/Dockerfile.migrate). The classic build must carry `-f <dockerfile>`;
+// artifacts without one are unaffected.
+func TestDeployK8s_ArtifactDockerfile(t *testing.T) {
+	cfg := baselineLikeCfg()
+	// Give one artifact an alternate Dockerfile sharing the "." context.
+	cfg.Pattern.Artifacts["baseline-migrate"] = config.Artifact{
+		Context: ".", Dockerfile: "Dockerfile.migrate",
+	}
+	reg, err := plugins.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(cfg, reg, true)
+	var buf bytes.Buffer
+	e.Out = &buf
+	if err := e.RunPipeline("build"); err != nil {
+		t.Fatalf("dry-run errored: %v", err)
+	}
+	got := buf.String()
+	if want := "docker build -f Dockerfile.migrate -t baseline-migrate:dev .\n"; !strings.Contains(got, want) {
+		t.Errorf("dockerfile artifact must build with -f:\n  want %s--- got ---\n%s", want, got)
+	}
+	// Artifacts with no dockerfile must NOT gain a -f flag.
+	if want := "docker build -t baseline:dev .\n"; !strings.Contains(got, want) {
+		t.Errorf("plain artifact must build without -f:\n  want %s--- got ---\n%s", want, got)
+	}
+}
+
+// TestDeployK8s_ArtifactDockerfilePush: the push path (buildx) must also carry
+// `-f <dockerfile>` when the artifact declares one.
+func TestDeployK8s_ArtifactDockerfilePush(t *testing.T) {
+	cfg := piLikeCfg()
+	cfg.Pattern.Artifacts["baseline-migrate"] = config.Artifact{
+		Context: ".", Dockerfile: "Dockerfile.migrate",
+	}
+	cfg.Pattern.Steps["scan"] = config.StepBlock{
+		Tool: "grype", Config: map[string]any{"images": []any{"baseline"}, "fail_on": "high"},
+	}
+	reg, err := plugins.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := engine.New(cfg, reg, true)
+	var buf bytes.Buffer
+	e.Out = &buf
+	if err := e.RunPipeline("build"); err != nil {
+		t.Fatalf("dry-run errored: %v", err)
+	}
+	got := buf.String()
+	want := "docker buildx build --platform linux/arm64 -f Dockerfile.migrate -t reg.example:5000/baseline-migrate:abc123 --push .\n"
+	if !strings.Contains(got, want) {
+		t.Errorf("push+dockerfile must use buildx with -f:\n  want %s--- got ---\n%s", want, got)
+	}
+}
+
 // TestDeployK8s_PushUsesBuildx: on a push env with a platform, the build must be
 // `docker buildx build --platform … --push` (not classic build + docker push).
 func TestDeployK8s_PushUsesBuildx(t *testing.T) {
