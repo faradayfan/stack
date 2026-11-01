@@ -12,12 +12,18 @@
   "semanticCommits": "enabled",
   "minimumReleaseAge": "14 days",
   "internalChecksFilter": "strict",
-  "packageRules": [
+  "customManagers": [
     {
-      "description": "Batch all non-major updates into one weekly PR.",
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "groupName": "non-major updates"
-    },
+      "customType": "regex",
+      "description": "grype is not in Renovate's built-in asdf tool list, so its .tool-versions pin is invisible to the asdf manager. Track it by hand against anchore/grype releases.",
+      "managerFilePatterns": ["/(^|/)\\.tool-versions$/"],
+      "matchStrings": ["(?:^|\\n)grype (?<currentValue>\\S+)"],
+      "depNameTemplate": "anchore/grype",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.*)$"
+    }
+  ],
+  "packageRules": [
     {
       "description": "Pinning to a SHA keeps the SAME version you already run (just hardened), so it's not subject to the new-version stability delay — let it merge immediately.",
       "matchUpdateTypes": ["pin", "pinDigest"],
@@ -30,18 +36,58 @@
       "automerge": false
     },
     {
-      "description": "GitHub Actions are CI tooling, not part of the binary — keep chore(deps) (no release). Auto-merge once CI passes, including the initial SHA pin and digest refreshes (actions are SHA-pinned via helpers:pinGitHubActionDigests).",
+      "description": "Batch non-major Go module updates into one weekly PR.",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "go modules"
+    },
+    {
+      "description": "GitHub Actions are CI tooling, not part of the binary — keep chore(deps) (no release).",
       "matchManagers": ["github-actions"],
-      "semanticCommitType": "chore",
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "Batch non-major action updates (including the initial SHA pin and digest refreshes; actions are SHA-pinned via helpers:pinGitHubActionDigests) into one weekly PR and auto-merge it once CI passes. Majors get their own PR for manual review.",
+      "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["pin", "minor", "patch", "digest"],
+      "groupName": "github actions",
       "automerge": true
     },
     {
-      "description": "asdf-pinned dev tools — chore(deps) (no release); auto-merge patch updates.",
-      "matchManagers": ["asdf"],
-      "semanticCommitType": "chore",
+      "description": "Dev tools pinned in .tool-versions (golangci-lint, grype) are not part of the binary — keep chore(deps) (no release).",
+      "matchManagers": ["asdf", "custom.regex"],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "Batch non-major dev-tool updates into one weekly PR; auto-merge it when it only contains patch updates.",
+      "matchManagers": ["asdf", "custom.regex"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "dev tools"
+    },
+    {
+      "matchManagers": ["asdf", "custom.regex"],
       "matchUpdateTypes": ["patch"],
       "automerge": true
+    },
+    {
+      "description": "The Go toolchain ships in the binary (the stdlib is compiled in), so bumping it is a fix(deps) that cuts a release. Renovate does not bump go.mod's `go` directive by default (rangeStrategy=bump opts in); without it grype keeps flagging the old stdlib and `stack check` fails on every PR. Go point releases are security releases, so wait 3 days instead of 14.",
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["go"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump",
+      "groupName": "go toolchain",
+      "semanticCommitType": "fix",
+      "automerge": false,
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Keep the asdf golang pin in the same PR as go.mod's `go` directive so the two never drift (CI builds with go.mod's version; `stack setup` installs the asdf one).",
+      "matchManagers": ["asdf"],
+      "matchDepNames": ["golang"],
+      "groupName": "go toolchain",
+      "semanticCommitType": "fix",
+      "automerge": false,
+      "minimumReleaseAge": "3 days"
     }
   ]
 }
