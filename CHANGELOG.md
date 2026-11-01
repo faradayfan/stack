@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/faradayfan/stack/compare/v0.1.3...v0.1.4) (2026-11-01)
+
+
+### Bug Fixes
+
+* bumping go version and fixing renovate config ([4bf593b](https://github.com/faradayfan/stack/commit/4bf593bbe43b024f3562fac67c12ca091650e1c2))
+
 ## [0.1.3](https://github.com/faradayfan/stack/compare/v0.1.2...v0.1.3) (2026-07-10)
 
 
