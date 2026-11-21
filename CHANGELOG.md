@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/faradayfan/stack/compare/v0.1.4...v0.1.5) (2026-11-21)
+
+
+### Bug Fixes
+
+* **deps:** update go toolchain to v1.27.4 ([b775403](https://github.com/faradayfan/stack/commit/b77540390a3b78a330d899ca9007ba9063f3ebf9))
+
 ## [0.1.4](https://github.com/faradayfan/stack/compare/v0.1.3...v0.1.4) (2026-11-01)
 
 
